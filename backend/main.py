@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import logging
 from contextlib import asynccontextmanager
@@ -11,12 +11,28 @@ from aiogram.enums import ParseMode
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
 
+from backend.mvp_store import (
+    add_receipt_to_event,
+    calculate_event,
+    create_event,
+    get_dashboard,
+    get_event_for_user,
+    get_profile_stats,
+    init_db,
+    list_contacts_for_user,
+    list_events_for_user,
+    list_recent_receipts_for_user,
+    set_item_assignment,
+    toggle_my_item_assignment,
+    upsert_profile,
+)
 from backend.proverkacheka_client import lookup_receipt_items
+from backend.qr_decoder import decode_qr_from_image_bytes
 from common.config import get_settings
 from common.receipt_qr import format_receipt_qr_message, parse_receipt_qr
 from common.telegram_auth import validate_init_data
-from backend.qr_decoder import decode_qr_from_image_bytes
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 WEBAPP_DIR = BASE_DIR / "webapp"
@@ -26,8 +42,27 @@ logging.basicConfig(level=getattr(logging, settings.log_level, logging.INFO))
 logger = logging.getLogger(__name__)
 
 
+class ParticipantInput(BaseModel):
+    user_id: int | None = None
+    display_name: str | None = None
+    username: str | None = None
+    phone: str | None = None
+
+
+class CreateEventInput(BaseModel):
+    title: str = Field(min_length=2, max_length=80)
+    event_date: str | None = None
+    participants: list[ParticipantInput] = Field(default_factory=list)
+
+
+class AssignMemberInput(BaseModel):
+    member_id: int
+    assigned: bool
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    init_db()
     app.state.bot = Bot(
         token=settings.bot_token,
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
@@ -38,7 +73,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="ReceiptSplit Backend",
-    version="0.1.0",
+    version="0.2.0",
     lifespan=lifespan,
 )
 app.mount("/static", StaticFiles(directory=WEBAPP_DIR), name="static")
@@ -54,9 +89,24 @@ async def healthcheck() -> dict[str, str]:
     return {"status": "ok"}
 
 
-async def _extract_user_from_init_data(init_data: str | None) -> dict[str, Any] | None:
+def _default_local_user() -> dict[str, Any]:
+    return {
+        "id": 900_000_001,
+        "username": "local_user",
+        "first_name": "Локальный",
+        "last_name": "пользователь",
+    }
+
+
+async def _extract_user_from_init_data(
+    init_data: str | None,
+    *,
+    allow_local_fallback: bool,
+) -> dict[str, Any]:
     if not init_data:
-        return None
+        if allow_local_fallback:
+            return _default_local_user()
+        raise HTTPException(status_code=401, detail="initData не передан.")
 
     validated_data = validate_init_data(
         init_data,
@@ -64,18 +114,32 @@ async def _extract_user_from_init_data(init_data: str | None) -> dict[str, Any] 
         ttl_seconds=settings.init_data_ttl_seconds,
     )
     if not validated_data:
-        raise HTTPException(
-            status_code=403,
-            detail="Не удалось проверить Telegram initData.",
-        )
+        if allow_local_fallback:
+            logger.warning("Invalid initData, fallback to local user.")
+            return _default_local_user()
+        raise HTTPException(status_code=403, detail="Не удалось проверить Telegram initData.")
 
     user = validated_data.get("user")
     if not isinstance(user, dict) or "id" not in user:
-        raise HTTPException(
-            status_code=403,
-            detail="В initData нет корректных данных пользователя.",
-        )
+        if allow_local_fallback:
+            return _default_local_user()
+        raise HTTPException(status_code=403, detail="В initData нет корректных данных пользователя.")
+
     return user
+
+
+async def _get_actor(
+    request: Request,
+    *,
+    init_data: str | None = None,
+    allow_local_fallback: bool = True,
+) -> dict[str, Any]:
+    raw_init_data = init_data or request.headers.get("X-Telegram-Init-Data")
+    user = await _extract_user_from_init_data(
+        raw_init_data,
+        allow_local_fallback=allow_local_fallback,
+    )
+    return upsert_profile(user)
 
 
 def _build_items_preview(items_lookup: dict[str, Any], *, limit: int = 8) -> str:
@@ -94,9 +158,7 @@ def _build_items_preview(items_lookup: dict[str, Any], *, limit: int = 8) -> str
         quantity = html.quote(str(item.get("quantity") or "1"))
         line_total = html.quote(str(item.get("sum") or "?"))
         price = html.quote(str(item.get("price") or "?"))
-        lines.append(
-            f"{index}. {name} — {quantity} × {price} ₽ = <b>{line_total} ₽</b>"
-        )
+        lines.append(f"{index}. {name} — {quantity} × {price} ₽ = <b>{line_total} ₽</b>")
 
     if items_count > limit:
         lines.append(f"... и ещё {items_count - limit} поз.")
@@ -104,30 +166,12 @@ def _build_items_preview(items_lookup: dict[str, Any], *, limit: int = 8) -> str
     return "\n".join(lines)
 
 
-@app.post("/api/receipts/process-photo")
-async def process_receipt_photo(
-    request: Request,
-    receipt_photo: UploadFile = File(...),
-    init_data: str | None = Form(default=None),
+async def _extract_receipt_data(
+    *,
+    image_bytes: bytes,
+    filename: str,
+    content_type: str,
 ) -> dict[str, Any]:
-    if not receipt_photo.content_type or not receipt_photo.content_type.startswith("image/"):
-        raise HTTPException(
-            status_code=400,
-            detail="Нужно загрузить изображение чека в формате JPG, PNG или похожем.",
-        )
-
-    image_bytes = await receipt_photo.read()
-    if not image_bytes:
-        raise HTTPException(
-            status_code=400,
-            detail="Файл пустой. Загрузите фотографию чека ещё раз.",
-        )
-    if len(image_bytes) > 12 * 1024 * 1024:
-        raise HTTPException(
-            status_code=400,
-            detail="Файл слишком большой. Для MVP используйте изображение до 12 МБ.",
-        )
-
     qr_payload: str | None = None
     local_qr_error: str | None = None
     try:
@@ -145,8 +189,6 @@ async def process_receipt_photo(
     }
 
     if settings.proverkacheka_api_token:
-        filename = receipt_photo.filename or "receipt.jpg"
-        content_type = receipt_photo.content_type or "application/octet-stream"
         try:
             items_lookup = await lookup_receipt_items(
                 api_url=settings.proverkacheka_api_url,
@@ -179,10 +221,7 @@ async def process_receipt_photo(
 
     if qr_payload is None and items_lookup.get("status") != "success":
         if local_qr_error and not settings.proverkacheka_api_token:
-            raise HTTPException(
-                status_code=503,
-                detail=local_qr_error,
-            )
+            raise HTTPException(status_code=503, detail=local_qr_error)
         raise HTTPException(
             status_code=422,
             detail=(
@@ -191,12 +230,8 @@ async def process_receipt_photo(
             ),
         )
 
-    user = await _extract_user_from_init_data(init_data)
-
-    delivery_status = "skipped"
     if hasattr(receipt, "to_dict"):
         receipt_payload = receipt.to_dict()
-        message_text = format_receipt_qr_message(receipt)
     else:
         receipt_payload = receipt or {
             "timestamp": None,
@@ -205,6 +240,276 @@ async def process_receipt_photo(
             "fiscal_document_number": None,
             "fiscal_sign": None,
         }
+
+    if not items_lookup.get("items"):
+        fallback_total = receipt_payload.get("total_amount") or "0"
+        items_lookup["items"] = [
+            {
+                "name": "Общая сумма чека",
+                "quantity": "1",
+                "price": str(fallback_total),
+                "sum": str(fallback_total),
+            }
+        ]
+        items_lookup["items_count"] = 1
+
+    return {
+        "qr_payload": qr_payload,
+        "receipt": receipt_payload,
+        "items_lookup": items_lookup,
+    }
+
+
+def _guess_store_name(items_lookup: dict[str, Any], receipt_payload: dict[str, Any]) -> str:
+    summary = items_lookup.get("receipt_summary") or {}
+    return (
+        summary.get("seller")
+        or summary.get("retail_place")
+        or receipt_payload.get("seller")
+        or "Чек без названия"
+    )
+
+
+@app.get("/api/me")
+async def get_me(request: Request) -> dict[str, Any]:
+    actor = await _get_actor(request)
+    stats = get_profile_stats(actor["user_id"])
+    return {
+        "profile": actor,
+        "stats": stats,
+    }
+
+
+@app.get("/api/contacts")
+async def get_contacts(request: Request) -> dict[str, Any]:
+    actor = await _get_actor(request)
+    contacts = list_contacts_for_user(actor["user_id"], limit=40)
+
+    if not contacts:
+        demo_profiles = [
+            {"id": 900_000_002, "first_name": "Арина", "username": "arina"},
+            {"id": 900_000_003, "first_name": "Миша", "username": "misha"},
+            {"id": 900_000_004, "first_name": "Олег", "username": "oleg"},
+            {"id": 900_000_005, "first_name": "Данил", "username": "danil"},
+        ]
+        for demo in demo_profiles:
+            upsert_profile(demo)
+        contacts = list_contacts_for_user(actor["user_id"], limit=40)
+
+    return {"contacts": contacts}
+
+
+@app.get("/api/dashboard")
+async def dashboard(request: Request) -> dict[str, Any]:
+    actor = await _get_actor(request)
+    return {
+        "dashboard": get_dashboard(actor["user_id"]),
+        "stats": get_profile_stats(actor["user_id"]),
+    }
+
+
+@app.get("/api/receipts/recent")
+async def recent_receipts(request: Request, limit: int = 30) -> dict[str, Any]:
+    actor = await _get_actor(request)
+    safe_limit = max(1, min(limit, 200))
+    return {
+        "receipts": list_recent_receipts_for_user(actor["user_id"], limit=safe_limit),
+    }
+
+
+@app.get("/api/events")
+async def list_events(request: Request) -> dict[str, Any]:
+    actor = await _get_actor(request)
+    return {"events": list_events_for_user(actor["user_id"]) }
+
+
+@app.post("/api/events")
+async def create_event_route(request: Request, payload: CreateEventInput) -> dict[str, Any]:
+    actor = await _get_actor(request)
+    title = payload.title.strip()
+    if len(title) < 2:
+        raise HTTPException(status_code=400, detail="Название события слишком короткое.")
+
+    participants_payload = [participant.model_dump() for participant in payload.participants]
+    event = create_event(
+        owner_user_id=actor["user_id"],
+        title=title,
+        event_date=payload.event_date,
+        participants=participants_payload,
+    )
+    return {
+        "status": "ok",
+        "event": event,
+    }
+
+
+@app.get("/api/events/{event_id}")
+async def event_detail(request: Request, event_id: int) -> dict[str, Any]:
+    actor = await _get_actor(request)
+    event = get_event_for_user(event_id=event_id, user_id=actor["user_id"])
+    if event is None:
+        raise HTTPException(status_code=404, detail="Событие не найдено.")
+
+    return event
+
+
+@app.post("/api/events/{event_id}/receipts/upload")
+async def upload_receipt_to_event(
+    request: Request,
+    event_id: int,
+    receipt_photo: UploadFile = File(...),
+    init_data: str | None = Form(default=None),
+) -> dict[str, Any]:
+    actor = await _get_actor(request, init_data=init_data)
+
+    if not receipt_photo.content_type or not receipt_photo.content_type.startswith("image/"):
+        raise HTTPException(status_code=400, detail="Нужно загрузить изображение чека.")
+
+    image_bytes = await receipt_photo.read()
+    if not image_bytes:
+        raise HTTPException(status_code=400, detail="Файл пустой.")
+    if len(image_bytes) > 12 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="Файл слишком большой. Максимум 12 МБ.")
+
+    extracted = await _extract_receipt_data(
+        image_bytes=image_bytes,
+        filename=receipt_photo.filename or "receipt.jpg",
+        content_type=receipt_photo.content_type,
+    )
+    receipt_payload = extracted["receipt"]
+    items_lookup = extracted["items_lookup"]
+
+    store_name = _guess_store_name(items_lookup, receipt_payload)
+
+    try:
+        save_result = add_receipt_to_event(
+            event_id=event_id,
+            user_id=actor["user_id"],
+            store_name=store_name,
+            total_amount=receipt_payload.get("total_amount"),
+            receipt_timestamp=receipt_payload.get("timestamp"),
+            raw_qr=extracted.get("qr_payload"),
+            items=items_lookup.get("items") or [],
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+    event = get_event_for_user(event_id=event_id, user_id=actor["user_id"])
+    if event is None:
+        raise HTTPException(status_code=404, detail="Событие не найдено после загрузки чека.")
+
+    return {
+        "status": "ok",
+        "message": "Чек добавлен в событие.",
+        "saved": save_result,
+        "event": event,
+    }
+
+
+@app.post("/api/events/{event_id}/items/{item_id}/toggle-mine")
+async def toggle_mine_item(request: Request, event_id: int, item_id: int) -> dict[str, Any]:
+    actor = await _get_actor(request)
+    try:
+        assigned = toggle_my_item_assignment(
+            event_id=event_id,
+            item_id=item_id,
+            user_id=actor["user_id"],
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    event = get_event_for_user(event_id=event_id, user_id=actor["user_id"])
+    if event is None:
+        raise HTTPException(status_code=404, detail="Событие не найдено.")
+
+    return {
+        "status": "ok",
+        "assigned": assigned,
+        "event": event,
+    }
+
+
+@app.post("/api/events/{event_id}/items/{item_id}/assign")
+async def assign_item(
+    request: Request,
+    event_id: int,
+    item_id: int,
+    payload: AssignMemberInput,
+) -> dict[str, Any]:
+    actor = await _get_actor(request)
+    try:
+        assigned = set_item_assignment(
+            event_id=event_id,
+            item_id=item_id,
+            member_id=payload.member_id,
+            user_id=actor["user_id"],
+            assigned=payload.assigned,
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    event = get_event_for_user(event_id=event_id, user_id=actor["user_id"])
+    if event is None:
+        raise HTTPException(status_code=404, detail="Событие не найдено.")
+
+    return {
+        "status": "ok",
+        "assigned": assigned,
+        "event": event,
+    }
+
+
+@app.post("/api/events/{event_id}/calculate")
+async def calculate_route(request: Request, event_id: int) -> dict[str, Any]:
+    actor = await _get_actor(request)
+    try:
+        result = calculate_event(event_id=event_id, user_id=actor["user_id"])
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    return {
+        "status": "ok",
+        "result": result,
+    }
+
+
+@app.post("/api/receipts/process-photo")
+async def process_receipt_photo(
+    request: Request,
+    receipt_photo: UploadFile = File(...),
+    init_data: str | None = Form(default=None),
+) -> dict[str, Any]:
+    if not receipt_photo.content_type or not receipt_photo.content_type.startswith("image/"):
+        raise HTTPException(status_code=400, detail="Нужно загрузить изображение чека.")
+
+    image_bytes = await receipt_photo.read()
+    if not image_bytes:
+        raise HTTPException(status_code=400, detail="Файл пустой.")
+    if len(image_bytes) > 12 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="Файл слишком большой. Используйте изображение до 12 МБ.")
+
+    extracted = await _extract_receipt_data(
+        image_bytes=image_bytes,
+        filename=receipt_photo.filename or "receipt.jpg",
+        content_type=receipt_photo.content_type,
+    )
+
+    actor = await _get_actor(request, init_data=init_data, allow_local_fallback=True)
+    message_text = ""
+    receipt_payload = extracted["receipt"]
+    if extracted.get("qr_payload"):
+        try:
+            parsed = parse_receipt_qr(extracted["qr_payload"])
+            message_text = format_receipt_qr_message(parsed)
+        except Exception:  # noqa: BLE001
+            message_text = "<b>Чек обработан</b>"
+    if not message_text:
         timestamp = receipt_payload.get("timestamp") or "Не удалось определить"
         total_amount = receipt_payload.get("total_amount") or "Не удалось определить"
         message_text = (
@@ -213,46 +518,29 @@ async def process_receipt_photo(
             f"Сумма: <b>{html.quote(str(total_amount))}</b>"
         )
 
-    if items_lookup.get("status") == "success":
-        message_text += _build_items_preview(items_lookup)
-    else:
-        message_text += (
-            "\n\n"
-            "Позиции автоматически не получены.\n"
-            f"Источник: <code>{html.quote(str(items_lookup.get('message')))}</code>"
-        )
+    message_text += _build_items_preview(extracted["items_lookup"])
 
-    if user is not None:
-        display_name = user.get("first_name") or user.get("username") or "пользователь"
-        username = f"@{user['username']}" if user.get("username") else "без username"
-        message_text = (
-            "<b>ReceiptSplit: фото чека обработано</b>\n\n"
-            f"Пользователь: <b>{html.quote(str(display_name))}</b> ({html.quote(username)})\n\n"
-            f"{message_text}"
-        )
-
+    delivery_status = "skipped"
+    if actor and actor.get("user_id") and int(actor["user_id"]) != 900_000_001:
         try:
             await request.app.state.bot.send_message(
-                chat_id=int(user["id"]),
-                text=message_text,
+                chat_id=int(actor["user_id"]),
+                text=(
+                    "<b>ReceiptSplit: фото чека обработано</b>\n\n"
+                    f"Пользователь: <b>{html.quote(str(actor.get('display_name', 'unknown')))}</b>\n\n"
+                    f"{message_text}"
+                ),
             )
             delivery_status = "sent"
-        except Exception as exc:  # noqa: BLE001
+        except Exception:  # noqa: BLE001
             logger.exception("Failed to send message to Telegram user")
-            raise HTTPException(
-                status_code=502,
-                detail="Фото обработано, но backend не смог отправить сообщение в Telegram.",
-            ) from exc
+            delivery_status = "error"
 
     return {
         "status": "ok",
-        "message": (
-            "Чек обработан. Проверьте чат с ботом."
-            if delivery_status == "sent"
-            else "Чек обработан. Результат показан только в Mini App, потому что initData не передан."
-        ),
+        "message": "Чек обработан.",
         "telegram_delivery": delivery_status,
-        "qr_payload": qr_payload,
-        "receipt": receipt_payload,
-        "items_lookup": items_lookup,
+        "qr_payload": extracted.get("qr_payload"),
+        "receipt": extracted["receipt"],
+        "items_lookup": extracted["items_lookup"],
     }

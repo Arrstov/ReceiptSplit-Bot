@@ -1,9 +1,9 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="ru">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-  <title>ReceiptSplit Mini App</title>
+  <title>SplitCheck | Делим чеки</title>
   <link rel="stylesheet" href="/static/styles.css">
   <script src="https://telegram.org/js/telegram-web-app.js?61"></script>
   <script defer src="/static/app.js"></script>
@@ -11,118 +11,186 @@
 <body>
   <div class="app-shell">
     <header class="topbar">
-      <div class="brand">
-        <div class="brand-mark">RS</div>
-        <div class="brand-copy">
-          <span class="brand-title">Раздели чек</span>
-          <span class="brand-subtitle">ReceiptSplit Mini App</span>
-        </div>
+      <button type="button" id="top-left-button" class="topbar-link">Закрыть</button>
+      <div class="topbar-center">
+        <strong id="topbar-title">SplitCheck</strong>
+        <span>мини-приложение</span>
       </div>
-      <div class="profile-badge">MVP</div>
+      <button type="button" id="top-right-button" class="topbar-icon">⋯</button>
     </header>
 
-    <main class="content">
-      <section class="hero-card">
-        <div class="eyebrow">Добавление чека</div>
-        <h1>Загрузите фото чека</h1>
-        <p class="lead">
-          Сейчас MVP умеет принимать фотографию чека, искать на ней QR-код
-          и разбирать базовые реквизиты покупки. Это первый шаг перед
-          полноценным делением позиций.
-        </p>
+    <main class="screen-container">
+      <section id="view-home" class="view is-visible">
+        <div class="hero-card hero-clickable" id="home-create-card">
+          <div class="hero-icon">＋</div>
+          <div>
+            <h1>Создать событие</h1>
+            <p>Добавьте участников и начните делить чеки</p>
+          </div>
+        </div>
 
-        <form id="receipt-form" class="receipt-form">
-          <input
-            id="receipt-file"
-            class="visually-hidden"
-            type="file"
-            accept="image/*"
-            capture="environment"
-            required
-          >
+        <section class="panel">
+          <div class="panel-head">
+            <h2>Мои события</h2>
+            <button class="link-button" data-open-view="events" type="button">Смотреть все</button>
+          </div>
+          <div id="home-events" class="card-list"></div>
+        </section>
 
-          <label class="upload-card" for="receipt-file">
-            <div class="upload-icon">QR</div>
-            <div class="upload-copy">
-              <strong>Выбрать фото чека</strong>
-              <span>Поддерживаются JPG, PNG и фото из камеры телефона</span>
-            </div>
-          </label>
+        <section class="panel">
+          <div class="panel-head">
+            <h2>Последние чеки</h2>
+            <button class="link-button" data-open-view="checks" type="button">Смотреть все</button>
+          </div>
+          <div id="home-receipts" class="card-list"></div>
+        </section>
+      </section>
 
-          <div id="preview-card" class="preview-card is-hidden">
-            <img id="preview-image" class="preview-image" alt="Предпросмотр чека">
-            <div class="preview-meta">
-              <strong id="preview-name">Файл не выбран</strong>
-              <span id="preview-size">0 МБ</span>
-            </div>
+      <section id="view-create" class="view">
+        <form id="create-event-form" class="panel form-panel">
+          <div class="field">
+            <label for="event-title">Название события</label>
+            <input id="event-title" name="title" type="text" maxlength="80" placeholder="Например: Корпоратив, День рождения" required>
           </div>
 
-          <button id="submit-button" class="primary-button" type="submit">
-            Обработать чек
-          </button>
+          <div class="field">
+            <label for="event-date">Дата (необязательно)</label>
+            <input id="event-date" name="event_date" type="date">
+          </div>
+
+          <div class="field">
+            <label>Участники</label>
+            <div class="row-buttons">
+              <button type="button" class="secondary-button" id="add-participant-contact">Добавить из контактов</button>
+              <button type="button" class="secondary-button" id="add-participant-manual">Добавить вручную</button>
+            </div>
+            <div id="create-participants" class="participant-list"></div>
+          </div>
+
+          <button id="create-event-submit" class="primary-button" type="submit">Создать событие</button>
         </form>
-
-        <div id="status-banner" class="status-banner" role="status">
-          Загрузите фотографию чека. Лучше всего работает чёткое фото без бликов, где QR-код виден целиком.
-        </div>
       </section>
 
-      <section id="result-card" class="info-card is-hidden">
-        <div class="card-title-row">
-          <h2>Результат обработки</h2>
-          <span class="pill">QR</span>
-        </div>
-
-        <div class="info-grid">
-          <div class="info-item">
-            <span class="info-label">Пользователь</span>
-            <strong id="user-name">Не определён</strong>
+      <section id="view-events" class="view">
+        <section class="panel">
+          <div class="panel-head">
+            <h2>События</h2>
           </div>
-          <div class="info-item">
-            <span class="info-label">Режим запуска</span>
-            <strong id="launch-mode">Браузер</strong>
-          </div>
-          <div class="info-item">
-            <span class="info-label">Дата и время</span>
-            <strong id="receipt-timestamp">Ещё нет данных</strong>
-          </div>
-          <div class="info-item">
-            <span class="info-label">Сумма</span>
-            <strong id="receipt-total">Ещё нет данных</strong>
-          </div>
-          <div class="info-item">
-            <span class="info-label">ФН</span>
-            <strong id="receipt-fn">Ещё нет данных</strong>
-          </div>
-          <div class="info-item">
-            <span class="info-label">ФД / ФП</span>
-            <strong id="receipt-doc">Ещё нет данных</strong>
-          </div>
-        </div>
-
-        <div class="raw-block">
-          <span class="info-label">Сырые данные QR</span>
-          <code id="qr-raw">Пока пусто</code>
-        </div>
+          <div id="events-list" class="card-list"></div>
+        </section>
       </section>
 
-      <section class="hint-card">
-        <h2>Что делает этот этап</h2>
-        <ul>
-          <li>Находит QR-код на фото чека и читает его содержимое.</li>
-          <li>Разбирает реквизиты чека: дату, сумму, ФН, ФД и ФП.</li>
-          <li>Отправляет результат пользователю в чат Telegram, если Mini App открыт внутри бота.</li>
-          <li>Оставляет основу для следующего шага: подключения внешнего источника позиций по чеку.</li>
-        </ul>
+      <section id="view-event" class="view">
+        <section class="panel event-header-panel">
+          <div class="event-title-line">
+            <h2 id="event-title-text">Событие</h2>
+            <button type="button" class="secondary-pill" id="event-edit-button">Изменить</button>
+          </div>
+          <p id="event-subtitle">0 участников • Без даты</p>
+          <div class="summary-grid">
+            <div>
+              <strong id="summary-total">0 ₽</strong>
+              <span>Сумма чека</span>
+            </div>
+            <div>
+              <strong id="summary-selected">0 ₽</strong>
+              <span>Выбрано</span>
+            </div>
+            <div>
+              <strong id="summary-per-person">0 ₽</strong>
+              <span>за человека</span>
+            </div>
+          </div>
+          <button type="button" class="primary-button" id="upload-receipt-button">Загрузить чек</button>
+          <input id="receipt-file-input" type="file" class="visually-hidden" accept="image/*" capture="environment">
+        </section>
+
+        <section class="panel">
+          <div class="panel-head">
+            <h2>Позиции чека</h2>
+            <span class="tiny-text" id="items-helper">Выберите, кто брал позиции</span>
+          </div>
+          <div id="event-items" class="item-list"></div>
+          <button type="button" class="primary-button" id="calculate-button">Рассчитать</button>
+        </section>
+      </section>
+
+      <section id="view-result" class="view">
+        <section class="panel result-main-card">
+          <div class="result-icon">✓</div>
+          <h2>Чек разделён!</h2>
+          <p>Каждый знает, сколько должен</p>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head">
+            <h2>Кто и сколько должен</h2>
+          </div>
+          <div id="result-list" class="result-list"></div>
+          <button id="share-result-button" type="button" class="primary-button">Поделиться результатом</button>
+        </section>
+      </section>
+
+      <section id="view-checks" class="view">
+        <section class="panel">
+          <div class="panel-head">
+            <h2>Чеки</h2>
+          </div>
+          <div id="checks-list" class="card-list"></div>
+        </section>
+      </section>
+
+      <section id="view-profile" class="view">
+        <section class="panel profile-top">
+          <div class="avatar-circle" id="profile-avatar">П</div>
+          <div>
+            <h2 id="profile-name">Профиль</h2>
+            <p id="profile-username">@username</p>
+          </div>
+        </section>
+
+        <section class="panel stats-grid" id="profile-stats">
+          <div>
+            <strong id="stat-events">0</strong>
+            <span>События</span>
+          </div>
+          <div>
+            <strong id="stat-participants">0</strong>
+            <span>Участников</span>
+          </div>
+          <div>
+            <strong id="stat-total">0 ₽</strong>
+            <span>Разделено</span>
+          </div>
+        </section>
+
+        <section class="panel menu-list">
+          <button type="button">Помощь</button>
+          <button type="button">О приложении</button>
+          <button type="button">Связаться с поддержкой</button>
+        </section>
       </section>
     </main>
 
-    <nav class="bottom-nav" aria-label="Декоративная навигация">
-      <span class="nav-item active">Главная</span>
-      <span class="nav-item">История</span>
-      <span class="nav-item">Чеки</span>
-      <span class="nav-item">Профиль</span>
+    <nav class="bottom-nav">
+      <button type="button" class="nav-item is-active" data-nav="home">Главная</button>
+      <button type="button" class="nav-item" data-nav="events">События</button>
+      <button type="button" class="nav-item nav-plus" id="bottom-plus">＋</button>
+      <button type="button" class="nav-item" data-nav="checks">Чеки</button>
+      <button type="button" class="nav-item" data-nav="profile">Профиль</button>
     </nav>
   </div>
+
+  <aside id="contacts-modal" class="modal is-hidden">
+    <div class="modal-sheet">
+      <div class="modal-head">
+        <h3>Контакты</h3>
+        <button type="button" id="close-contacts-modal">Закрыть</button>
+      </div>
+      <div id="contacts-list" class="contact-list"></div>
+    </div>
+  </aside>
+
+  <div id="toast" class="toast is-hidden"></div>
 </body>
 </html>
