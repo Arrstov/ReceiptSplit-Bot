@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>ReceiptSplit Mini App</title>
+  <link rel="stylesheet" href="/static/styles.css">
+  <script src="https://telegram.org/js/telegram-web-app.js?61"></script>
+  <script defer src="/static/app.js"></script>
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark">RS</div>
+        <div class="brand-copy">
+          <span class="brand-title">Раздели чек</span>
+          <span class="brand-subtitle">ReceiptSplit Mini App</span>
+        </div>
+      </div>
+      <div class="profile-badge">MVP</div>
+    </header>
+
+    <main class="content">
+      <section class="hero-card">
+        <div class="eyebrow">Добавление чека</div>
+        <h1>Загрузите фото чека</h1>
+        <p class="lead">
+          Сейчас MVP умеет принимать фотографию чека, искать на ней QR-код
+          и разбирать базовые реквизиты покупки. Это первый шаг перед
+          полноценным делением позиций.
+        </p>
+
+        <form id="receipt-form" class="receipt-form">
+          <input
+            id="receipt-file"
+            class="visually-hidden"
+            type="file"
+            accept="image/*"
+            capture="environment"
+            required
+          >
+
+          <label class="upload-card" for="receipt-file">
+            <div class="upload-icon">QR</div>
+            <div class="upload-copy">
+              <strong>Выбрать фото чека</strong>
+              <span>Поддерживаются JPG, PNG и фото из камеры телефона</span>
+            </div>
+          </label>
+
+          <div id="preview-card" class="preview-card is-hidden">
+            <img id="preview-image" class="preview-image" alt="Предпросмотр чека">
+            <div class="preview-meta">
+              <strong id="preview-name">Файл не выбран</strong>
+              <span id="preview-size">0 МБ</span>
+            </div>
+          </div>
+
+          <button id="submit-button" class="primary-button" type="submit">
+            Обработать чек
+          </button>
+        </form>
+
+        <div id="status-banner" class="status-banner" role="status">
+          Загрузите фотографию чека. Лучше всего работает чёткое фото без бликов, где QR-код виден целиком.
+        </div>
+      </section>
+
+      <section id="result-card" class="info-card is-hidden">
+        <div class="card-title-row">
+          <h2>Результат обработки</h2>
+          <span class="pill">QR</span>
+        </div>
+
+        <div class="info-grid">
+          <div class="info-item">
+            <span class="info-label">Пользователь</span>
+            <strong id="user-name">Не определён</strong>
+          </div>
+          <div class="info-item">
+            <span class="info-label">Режим запуска</span>
+            <strong id="launch-mode">Браузер</strong>
+          </div>
+          <div class="info-item">
+            <span class="info-label">Дата и время</span>
+            <strong id="receipt-timestamp">Ещё нет данных</strong>
+          </div>
+          <div class="info-item">
+            <span class="info-label">Сумма</span>
+            <strong id="receipt-total">Ещё нет данных</strong>
+          </div>
+          <div class="info-item">
+            <span class="info-label">ФН</span>
+            <strong id="receipt-fn">Ещё нет данных</strong>
+          </div>
+          <div class="info-item">
+            <span class="info-label">ФД / ФП</span>
+            <strong id="receipt-doc">Ещё нет данных</strong>
+          </div>
+        </div>
+
+        <div class="raw-block">
+          <span class="info-label">Сырые данные QR</span>
+          <code id="qr-raw">Пока пусто</code>
+        </div>
+      </section>
+
+      <section class="hint-card">
+        <h2>Что делает этот этап</h2>
+        <ul>
+          <li>Находит QR-код на фото чека и читает его содержимое.</li>
+          <li>Разбирает реквизиты чека: дату, сумму, ФН, ФД и ФП.</li>
+          <li>Отправляет результат пользователю в чат Telegram, если Mini App открыт внутри бота.</li>
+          <li>Оставляет основу для следующего шага: подключения внешнего источника позиций по чеку.</li>
+        </ul>
+      </section>
+    </main>
+
+    <nav class="bottom-nav" aria-label="Декоративная навигация">
+      <span class="nav-item active">Главная</span>
+      <span class="nav-item">История</span>
+      <span class="nav-item">Чеки</span>
+      <span class="nav-item">Профиль</span>
+    </nav>
+  </div>
+</body>
+</html>
