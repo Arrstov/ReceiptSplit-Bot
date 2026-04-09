@@ -65,6 +65,9 @@ body {
   border-radius: 50%;
   border: 1px solid var(--line);
   background: var(--surface);
+  display: grid;
+  place-items: center;
+  font-size: 1.1rem;
 }
 
 .topbar-center {
@@ -252,7 +255,7 @@ input[type="date"] {
 
 .row-buttons {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
 }
 
@@ -360,6 +363,21 @@ input[type="date"] {
 .summary-grid span {
   color: var(--muted);
   font-size: 0.76rem;
+}
+
+.manual-item-form {
+  display: grid;
+  grid-template-columns: 1.5fr 1fr auto;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.manual-item-form input {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px 11px;
+  font: inherit;
+  background: #f8fbff;
 }
 
 .tiny-text {
@@ -476,6 +494,28 @@ input[type="date"] {
   color: var(--muted);
 }
 
+.field-label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.profile-edit-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.profile-edit-row input {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px 11px;
+  font: inherit;
+  background: #f8fbff;
+}
+
 .stats-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -500,32 +540,12 @@ input[type="date"] {
   font-size: 0.75rem;
 }
 
-.menu-list {
-  padding: 0;
-  overflow: hidden;
-}
-
-.menu-list button {
-  width: 100%;
-  border: 0;
-  background: transparent;
-  padding: 14px;
-  text-align: left;
-  font: inherit;
-  color: var(--text);
-  border-bottom: 1px solid var(--line);
-}
-
-.menu-list button:last-child {
-  border-bottom: 0;
-}
-
 .bottom-nav {
   margin-top: auto;
   position: sticky;
   bottom: 0;
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto minmax(0, 1fr) minmax(0, 1fr);
   align-items: center;
   gap: 6px;
   padding: 10px;
@@ -539,12 +559,17 @@ input[type="date"] {
   border: 0;
   background: transparent;
   color: var(--muted);
-  font: inherit;
+  font-family: inherit;
+  line-height: 1;
   font-size: 0.76rem;
   font-weight: 700;
   padding: 8px 6px;
   border-radius: 12px;
   cursor: pointer;
+  min-height: 38px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .nav-item.is-active {
@@ -556,11 +581,14 @@ input[type="date"] {
   width: 44px;
   height: 44px;
   border-radius: 50%;
-  margin: 0 auto;
+  margin: 0;
   background: linear-gradient(135deg, #3f97ff, #2e76e6);
   color: #fff;
-  font-size: 1.5rem;
+  font-size: 1.6rem;
   padding: 0;
+  min-height: 44px;
+  align-self: center;
+  justify-self: center;
 }
 
 .modal {
@@ -605,6 +633,10 @@ input[type="date"] {
   color: var(--brand-dark);
   font: inherit;
   font-weight: 700;
+}
+
+.modal-actions {
+  margin-bottom: 10px;
 }
 
 .contact-row {
@@ -654,7 +686,15 @@ input[type="date"] {
     grid-template-columns: 1fr;
   }
 
+  .manual-item-form {
+    grid-template-columns: 1fr;
+  }
+
   .row-buttons {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .profile-edit-row {
     grid-template-columns: 1fr;
   }
 }

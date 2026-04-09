@@ -14,6 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from backend.mvp_store import (
+    add_manual_item_to_event,
     add_receipt_to_event,
     calculate_event,
     create_event,
@@ -23,9 +24,12 @@ from backend.mvp_store import (
     init_db,
     list_contacts_for_user,
     list_events_for_user,
+    list_group_participants_for_user,
+    list_groups_for_user,
     list_recent_receipts_for_user,
     set_item_assignment,
     toggle_my_item_assignment,
+    update_profile_name,
     upsert_profile,
 )
 from backend.proverkacheka_client import lookup_receipt_items
@@ -60,6 +64,16 @@ class AssignMemberInput(BaseModel):
     assigned: bool
 
 
+class ManualItemInput(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    amount: str
+    receipt_id: int | None = None
+
+
+class UpdateProfileNameInput(BaseModel):
+    custom_name: str | None = Field(default=None, max_length=80)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
@@ -67,6 +81,12 @@ async def lifespan(app: FastAPI):
         token=settings.bot_token,
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
+    try:
+        me = await app.state.bot.get_me()
+        app.state.bot_username = me.username
+    except Exception:  # noqa: BLE001
+        logger.exception("Failed to fetch bot username")
+        app.state.bot_username = None
     yield
     await app.state.bot.session.close()
 
@@ -140,6 +160,13 @@ async def _get_actor(
         allow_local_fallback=allow_local_fallback,
     )
     return upsert_profile(user)
+
+
+def _build_contacts_request_link(request: Request) -> str | None:
+    bot_username = getattr(request.app.state, "bot_username", None)
+    if not bot_username:
+        return None
+    return f"https://t.me/{bot_username}?start=contacts"
 
 
 def _build_items_preview(items_lookup: dict[str, Any], *, limit: int = 8) -> str:
@@ -280,23 +307,54 @@ async def get_me(request: Request) -> dict[str, Any]:
     }
 
 
+@app.post("/api/me/name")
+async def set_my_name(request: Request, payload: UpdateProfileNameInput) -> dict[str, Any]:
+    actor = await _get_actor(request)
+    try:
+        profile = update_profile_name(
+            user_id=actor["user_id"],
+            custom_name=payload.custom_name,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    return {
+        "status": "ok",
+        "profile": profile,
+        "stats": get_profile_stats(actor["user_id"]),
+    }
+
+
 @app.get("/api/contacts")
 async def get_contacts(request: Request) -> dict[str, Any]:
     actor = await _get_actor(request)
     contacts = list_contacts_for_user(actor["user_id"], limit=40)
+    return {
+        "contacts": contacts,
+        "request_contacts_link": _build_contacts_request_link(request),
+        "request_contacts_command": "/contacts",
+    }
 
-    if not contacts:
-        demo_profiles = [
-            {"id": 900_000_002, "first_name": "Арина", "username": "arina"},
-            {"id": 900_000_003, "first_name": "Миша", "username": "misha"},
-            {"id": 900_000_004, "first_name": "Олег", "username": "oleg"},
-            {"id": 900_000_005, "first_name": "Данил", "username": "danil"},
-        ]
-        for demo in demo_profiles:
-            upsert_profile(demo)
-        contacts = list_contacts_for_user(actor["user_id"], limit=40)
 
-    return {"contacts": contacts}
+@app.get("/api/groups")
+async def get_groups(request: Request) -> dict[str, Any]:
+    actor = await _get_actor(request)
+    groups = list_groups_for_user(actor["user_id"], limit=30)
+    return {"groups": groups}
+
+
+@app.get("/api/groups/{chat_id}/participants")
+async def get_group_participants(request: Request, chat_id: int) -> dict[str, Any]:
+    actor = await _get_actor(request)
+    try:
+        participants = list_group_participants_for_user(
+            user_id=actor["user_id"],
+            chat_id=chat_id,
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+    return {"participants": participants}
 
 
 @app.get("/api/dashboard")
@@ -402,6 +460,37 @@ async def upload_receipt_to_event(
         "status": "ok",
         "message": "Чек добавлен в событие.",
         "saved": save_result,
+        "event": event,
+    }
+
+
+@app.post("/api/events/{event_id}/items/manual")
+async def add_manual_item(
+    request: Request,
+    event_id: int,
+    payload: ManualItemInput,
+) -> dict[str, Any]:
+    actor = await _get_actor(request)
+    try:
+        saved = add_manual_item_to_event(
+            event_id=event_id,
+            user_id=actor["user_id"],
+            name=payload.name,
+            amount=payload.amount,
+            receipt_id=payload.receipt_id,
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    event = get_event_for_user(event_id=event_id, user_id=actor["user_id"])
+    if event is None:
+        raise HTTPException(status_code=404, detail="Событие не найдено.")
+
+    return {
+        "status": "ok",
+        "saved": saved,
         "event": event,
     }
 

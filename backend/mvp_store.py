@@ -2,6 +2,7 @@
 
 import sqlite3
 from datetime import datetime
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
 
@@ -14,14 +15,26 @@ def _utc_now_iso() -> str:
     return datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
 
 
+def _clean_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
 def _display_name_from_profile(profile: dict[str, Any]) -> str:
-    if profile.get("username"):
-        return f"@{profile['username']}"
+    custom_name = _clean_text(profile.get("custom_name"))
+    if custom_name:
+        return custom_name
 
     parts = [profile.get("first_name") or "", profile.get("last_name") or ""]
     full_name = " ".join(part for part in parts if part).strip()
     if full_name:
         return full_name
+
+    username = _clean_text(profile.get("username"))
+    if username:
+        return f"@{username.lstrip('@')}"
 
     return f"User {profile['user_id']}"
 
@@ -33,16 +46,16 @@ def _parse_money_to_cents(value: Any) -> int:
     if isinstance(value, int):
         return value
 
-    text = str(value).strip().replace(",", ".")
-    if not text:
+    normalized = str(value).strip().replace(",", ".")
+    if not normalized:
         return 0
 
     try:
-        amount = float(text)
-    except ValueError:
+        amount = Decimal(normalized)
+    except InvalidOperation:
         return 0
 
-    return int(round(amount * 100))
+    return int((amount * 100).quantize(Decimal("1")))
 
 
 def _format_cents(value: int) -> str:
@@ -55,6 +68,22 @@ def _connect() -> sqlite3.Connection:
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA foreign_keys = ON")
     return connection
+
+
+def _sync_profile_to_event_members(conn: sqlite3.Connection, profile: dict[str, Any]) -> None:
+    conn.execute(
+        """
+        UPDATE event_members
+        SET display_name = ?, username = ?, phone = ?
+        WHERE user_id = ?
+        """,
+        (
+            _display_name_from_profile(profile),
+            profile.get("username"),
+            profile.get("phone"),
+            int(profile["user_id"]),
+        ),
+    )
 
 
 def init_db() -> None:
@@ -126,46 +155,147 @@ def init_db() -> None:
                 FOREIGN KEY(member_id) REFERENCES event_members(id) ON DELETE CASCADE,
                 FOREIGN KEY(assigned_by_user_id) REFERENCES profiles(user_id)
             );
+
+            CREATE TABLE IF NOT EXISTS user_contacts (
+                owner_user_id INTEGER NOT NULL,
+                contact_user_id INTEGER NOT NULL,
+                created_at TEXT NOT NULL,
+                PRIMARY KEY(owner_user_id, contact_user_id),
+                FOREIGN KEY(owner_user_id) REFERENCES profiles(user_id) ON DELETE CASCADE,
+                FOREIGN KEY(contact_user_id) REFERENCES profiles(user_id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS group_chats (
+                chat_id INTEGER PRIMARY KEY,
+                title TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS group_chat_members (
+                chat_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                first_seen_at TEXT NOT NULL,
+                last_seen_at TEXT NOT NULL,
+                PRIMARY KEY(chat_id, user_id),
+                FOREIGN KEY(chat_id) REFERENCES group_chats(chat_id) ON DELETE CASCADE,
+                FOREIGN KEY(user_id) REFERENCES profiles(user_id) ON DELETE CASCADE
+            );
             """
         )
 
+        profile_columns = {
+            row["name"]
+            for row in conn.execute("PRAGMA table_info(profiles)").fetchall()
+        }
+        if "custom_name" not in profile_columns:
+            conn.execute("ALTER TABLE profiles ADD COLUMN custom_name TEXT")
 
-def upsert_profile(user: dict[str, Any]) -> dict[str, Any]:
-    profile = {
-        "user_id": int(user["id"]),
-        "username": user.get("username"),
-        "first_name": user.get("first_name"),
-        "last_name": user.get("last_name"),
-        "phone": user.get("phone_number") or user.get("phone"),
-    }
+
+def upsert_profile(
+    user: dict[str, Any],
+    *,
+    owner_user_id: int | None = None,
+) -> dict[str, Any]:
+    user_id_raw = user.get("id", user.get("user_id"))
+    if user_id_raw is None:
+        raise ValueError("User id is required")
+
+    user_id = int(user_id_raw)
+    now = _utc_now_iso()
 
     with _connect() as conn:
+        existing_row = conn.execute(
+            """
+            SELECT custom_name
+            FROM profiles
+            WHERE user_id = ?
+            """,
+            (user_id,),
+        ).fetchone()
+
+        if "custom_name" in user:
+            custom_name = _clean_text(user.get("custom_name"))
+        else:
+            custom_name = (
+                _clean_text(existing_row["custom_name"])
+                if existing_row is not None
+                else None
+            )
+
+        profile = {
+            "user_id": user_id,
+            "username": _clean_text(user.get("username")),
+            "first_name": _clean_text(user.get("first_name")),
+            "last_name": _clean_text(user.get("last_name")),
+            "phone": _clean_text(user.get("phone_number") or user.get("phone")),
+            "custom_name": custom_name,
+            "updated_at": now,
+        }
+
         conn.execute(
             """
-            INSERT INTO profiles (user_id, username, first_name, last_name, phone, updated_at)
-            VALUES (:user_id, :username, :first_name, :last_name, :phone, :updated_at)
+            INSERT INTO profiles (
+                user_id,
+                username,
+                first_name,
+                last_name,
+                phone,
+                custom_name,
+                updated_at
+            ) VALUES (
+                :user_id,
+                :username,
+                :first_name,
+                :last_name,
+                :phone,
+                :custom_name,
+                :updated_at
+            )
             ON CONFLICT(user_id) DO UPDATE SET
                 username = excluded.username,
-                first_name = excluded.first_name,
-                last_name = excluded.last_name,
+                first_name = COALESCE(excluded.first_name, profiles.first_name),
+                last_name = COALESCE(excluded.last_name, profiles.last_name),
                 phone = COALESCE(excluded.phone, profiles.phone),
+                custom_name = COALESCE(excluded.custom_name, profiles.custom_name),
                 updated_at = excluded.updated_at
             """,
-            {
-                **profile,
-                "updated_at": _utc_now_iso(),
-            },
+            profile,
         )
 
-    profile["display_name"] = _display_name_from_profile(profile)
-    return profile
+        if owner_user_id is not None and int(owner_user_id) != user_id:
+            conn.execute(
+                """
+                INSERT INTO user_contacts (owner_user_id, contact_user_id, created_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(owner_user_id, contact_user_id)
+                DO UPDATE SET created_at = excluded.created_at
+                """,
+                (int(owner_user_id), user_id, now),
+            )
+
+        stored_profile_row = conn.execute(
+            """
+            SELECT user_id, username, first_name, last_name, phone, custom_name
+            FROM profiles
+            WHERE user_id = ?
+            """,
+            (user_id,),
+        ).fetchone()
+        if stored_profile_row is None:
+            raise ValueError("Profile save failed")
+
+        stored_profile = dict(stored_profile_row)
+        _sync_profile_to_event_members(conn, stored_profile)
+
+    stored_profile["display_name"] = _display_name_from_profile(stored_profile)
+    return stored_profile
 
 
 def get_profile(user_id: int) -> dict[str, Any] | None:
     with _connect() as conn:
         row = conn.execute(
             """
-            SELECT user_id, username, first_name, last_name, phone
+            SELECT user_id, username, first_name, last_name, phone, custom_name
             FROM profiles
             WHERE user_id = ?
             """,
@@ -184,21 +314,199 @@ def list_contacts_for_user(user_id: int, *, limit: int = 30) -> list[dict[str, A
     with _connect() as conn:
         rows = conn.execute(
             """
-            SELECT DISTINCT p.user_id, p.username, p.first_name, p.last_name, p.phone, p.updated_at
-            FROM profiles p
-            WHERE p.user_id != ?
-            ORDER BY p.updated_at DESC
+            SELECT
+                p.user_id,
+                p.username,
+                p.first_name,
+                p.last_name,
+                p.phone,
+                p.custom_name,
+                uc.created_at AS linked_at
+            FROM user_contacts uc
+            JOIN profiles p ON p.user_id = uc.contact_user_id
+            WHERE uc.owner_user_id = ?
+            ORDER BY uc.created_at DESC
             LIMIT ?
             """,
             (user_id, limit),
         ).fetchall()
 
-    contacts = []
+    contacts: list[dict[str, Any]] = []
     for row in rows:
         contact = dict(row)
         contact["display_name"] = _display_name_from_profile(contact)
         contacts.append(contact)
     return contacts
+
+
+def update_profile_name(user_id: int, custom_name: str | None) -> dict[str, Any]:
+    normalized_name = _clean_text(custom_name)
+
+    with _connect() as conn:
+        row = conn.execute(
+            """
+            SELECT user_id, username, first_name, last_name, phone, custom_name
+            FROM profiles
+            WHERE user_id = ?
+            """,
+            (user_id,),
+        ).fetchone()
+        if row is None:
+            raise ValueError("Profile not found")
+
+        conn.execute(
+            """
+            UPDATE profiles
+            SET custom_name = ?, updated_at = ?
+            WHERE user_id = ?
+            """,
+            (normalized_name, _utc_now_iso(), user_id),
+        )
+
+        updated_row = conn.execute(
+            """
+            SELECT user_id, username, first_name, last_name, phone, custom_name
+            FROM profiles
+            WHERE user_id = ?
+            """,
+            (user_id,),
+        ).fetchone()
+        if updated_row is None:
+            raise ValueError("Profile update failed")
+
+        profile = dict(updated_row)
+        _sync_profile_to_event_members(conn, profile)
+
+    profile["display_name"] = _display_name_from_profile(profile)
+    return profile
+
+
+def save_shared_contacts(owner_user_id: int, shared_users: list[dict[str, Any]]) -> int:
+    saved = 0
+    for shared_user in shared_users:
+        user_id_raw = shared_user.get("user_id", shared_user.get("id"))
+        if user_id_raw is None:
+            continue
+
+        contact_user_id = int(user_id_raw)
+        if contact_user_id == int(owner_user_id):
+            continue
+
+        upsert_profile(
+            {
+                "id": contact_user_id,
+                "first_name": _clean_text(shared_user.get("first_name")),
+                "last_name": _clean_text(shared_user.get("last_name")),
+                "username": _clean_text(shared_user.get("username")),
+            },
+            owner_user_id=owner_user_id,
+        )
+        saved += 1
+
+    return saved
+
+
+def register_group_member(chat_id: int, chat_title: str, user: dict[str, Any]) -> None:
+    if chat_id >= 0:
+        return
+
+    user_profile = upsert_profile(user)
+    now = _utc_now_iso()
+
+    with _connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO group_chats (chat_id, title, updated_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(chat_id) DO UPDATE SET
+                title = excluded.title,
+                updated_at = excluded.updated_at
+            """,
+            (chat_id, _clean_text(chat_title) or "Telegram Group", now),
+        )
+
+        conn.execute(
+            """
+            INSERT INTO group_chat_members (chat_id, user_id, first_seen_at, last_seen_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(chat_id, user_id) DO UPDATE SET
+                last_seen_at = excluded.last_seen_at
+            """,
+            (chat_id, user_profile["user_id"], now, now),
+        )
+
+
+def list_groups_for_user(user_id: int, *, limit: int = 20) -> list[dict[str, Any]]:
+    with _connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT
+                g.chat_id,
+                g.title,
+                COUNT(m.user_id) AS participants_count,
+                MAX(m.last_seen_at) AS last_activity_at
+            FROM group_chats g
+            JOIN group_chat_members me ON me.chat_id = g.chat_id AND me.user_id = ?
+            LEFT JOIN group_chat_members m ON m.chat_id = g.chat_id
+            GROUP BY g.chat_id
+            ORDER BY COALESCE(MAX(m.last_seen_at), g.updated_at) DESC
+            LIMIT ?
+            """,
+            (user_id, limit),
+        ).fetchall()
+
+    groups: list[dict[str, Any]] = []
+    for row in rows:
+        groups.append(
+            {
+                "chat_id": int(row["chat_id"]),
+                "title": row["title"],
+                "participants_count": int(row["participants_count"] or 0),
+                "last_activity_at": row["last_activity_at"],
+            }
+        )
+
+    return groups
+
+
+def list_group_participants_for_user(user_id: int, chat_id: int) -> list[dict[str, Any]]:
+    with _connect() as conn:
+        can_access = conn.execute(
+            """
+            SELECT 1
+            FROM group_chat_members
+            WHERE chat_id = ? AND user_id = ?
+            """,
+            (chat_id, user_id),
+        ).fetchone()
+        if can_access is None:
+            raise PermissionError("Вы не состоите в этой группе или группа ещё не синхронизирована.")
+
+        rows = conn.execute(
+            """
+            SELECT
+                p.user_id,
+                p.username,
+                p.first_name,
+                p.last_name,
+                p.phone,
+                p.custom_name,
+                gm.last_seen_at
+            FROM group_chat_members gm
+            JOIN profiles p ON p.user_id = gm.user_id
+            WHERE gm.chat_id = ?
+            ORDER BY p.custom_name ASC, p.first_name ASC, p.username ASC
+            """,
+            (chat_id,),
+        ).fetchall()
+
+    participants: list[dict[str, Any]] = []
+    for row in rows:
+        participant = dict(row)
+        participant["display_name"] = _display_name_from_profile(participant)
+        participants.append(participant)
+
+    return participants
 
 
 def create_event(
@@ -213,7 +521,7 @@ def create_event(
     with _connect() as conn:
         owner = conn.execute(
             """
-            SELECT user_id, username, first_name, last_name, phone
+            SELECT user_id, username, first_name, last_name, phone, custom_name
             FROM profiles
             WHERE user_id = ?
             """,
@@ -256,14 +564,48 @@ def create_event(
                 continue
 
             if participant_user_id is not None:
+                participant_user_id = int(participant_user_id)
                 contact = conn.execute(
                     """
-                    SELECT user_id, username, first_name, last_name, phone
+                    SELECT user_id, username, first_name, last_name, phone, custom_name
                     FROM profiles
                     WHERE user_id = ?
                     """,
-                    (int(participant_user_id),),
+                    (participant_user_id,),
                 ).fetchone()
+
+                if contact is None:
+                    fallback_username = _clean_text(participant.get("username"))
+                    fallback_name = _clean_text(participant.get("display_name"))
+                    conn.execute(
+                        """
+                        INSERT OR IGNORE INTO profiles (
+                            user_id,
+                            username,
+                            first_name,
+                            last_name,
+                            phone,
+                            custom_name,
+                            updated_at
+                        ) VALUES (?, ?, ?, NULL, ?, ?, ?)
+                        """,
+                        (
+                            participant_user_id,
+                            fallback_username,
+                            fallback_name,
+                            _clean_text(participant.get("phone")),
+                            None,
+                            created_at,
+                        ),
+                    )
+                    contact = conn.execute(
+                        """
+                        SELECT user_id, username, first_name, last_name, phone, custom_name
+                        FROM profiles
+                        WHERE user_id = ?
+                        """,
+                        (participant_user_id,),
+                    ).fetchone()
                 if contact is None:
                     continue
 
@@ -276,7 +618,7 @@ def create_event(
                     """,
                     (
                         event_id,
-                        int(contact_data["user_id"]),
+                        participant_user_id,
                         _display_name_from_profile(contact_data),
                         contact_data.get("username"),
                         contact_data.get("phone"),
@@ -285,7 +627,7 @@ def create_event(
                 )
                 continue
 
-            name = str(participant.get("display_name") or "").strip()
+            name = _clean_text(participant.get("display_name"))
             if not name:
                 continue
 
@@ -298,8 +640,8 @@ def create_event(
                 (
                     event_id,
                     name,
-                    participant.get("username"),
-                    participant.get("phone"),
+                    _clean_text(participant.get("username")),
+                    _clean_text(participant.get("phone")),
                     created_at,
                 ),
             )
@@ -343,16 +685,23 @@ def list_events_for_user(user_id: int, *, limit: int | None = None) -> list[dict
             e.event_date,
             e.owner_user_id,
             e.created_at,
-            COUNT(DISTINCT m.id) AS participants_count,
-            COALESCE(SUM(r.total_cents), 0) AS total_cents,
-            MAX(r.created_at) AS last_receipt_at
+            COALESCE(members.participants_count, 0) AS participants_count,
+            COALESCE(receipts.total_cents, 0) AS total_cents,
+            receipts.last_receipt_at
         FROM events e
         JOIN event_members em ON em.event_id = e.id
-        LEFT JOIN event_members m ON m.event_id = e.id
-        LEFT JOIN receipts r ON r.event_id = e.id
+        LEFT JOIN (
+            SELECT event_id, COUNT(*) AS participants_count
+            FROM event_members
+            GROUP BY event_id
+        ) AS members ON members.event_id = e.id
+        LEFT JOIN (
+            SELECT event_id, COALESCE(SUM(total_cents), 0) AS total_cents, MAX(created_at) AS last_receipt_at
+            FROM receipts
+            GROUP BY event_id
+        ) AS receipts ON receipts.event_id = e.id
         WHERE em.user_id = ?
-        GROUP BY e.id
-        ORDER BY COALESCE(MAX(r.created_at), e.created_at) DESC
+        ORDER BY COALESCE(receipts.last_receipt_at, e.created_at) DESC
         """
     )
 
@@ -595,6 +944,7 @@ def add_receipt_to_event(
         if not _is_member(conn, event_id=event_id, user_id=user_id):
             raise PermissionError("User is not participant of the event.")
 
+        total_cents = _parse_money_to_cents(total_amount)
         cursor = conn.execute(
             """
             INSERT INTO receipts (
@@ -610,8 +960,8 @@ def add_receipt_to_event(
             (
                 event_id,
                 user_id,
-                store_name,
-                _parse_money_to_cents(total_amount),
+                _clean_text(store_name) or "Чек",
+                total_cents,
                 receipt_timestamp,
                 raw_qr,
                 created_at,
@@ -620,15 +970,16 @@ def add_receipt_to_event(
         receipt_id = int(cursor.lastrowid)
 
         inserted_items = 0
+        inserted_sum_cents = 0
         for item in items:
-            name = str(item.get("name") or "Без названия").strip()
-            if not name:
-                continue
+            name = _clean_text(item.get("name")) or "Без названия"
             quantity = float(item.get("quantity") or 1)
             price_cents = _parse_money_to_cents(item.get("price"))
             sum_cents = _parse_money_to_cents(item.get("sum"))
             if sum_cents == 0 and price_cents and quantity:
                 sum_cents = int(round(price_cents * quantity))
+            if sum_cents == 0 and price_cents:
+                sum_cents = price_cents
 
             conn.execute(
                 """
@@ -640,13 +991,116 @@ def add_receipt_to_event(
                     sum_cents
                 ) VALUES (?, ?, ?, ?, ?)
                 """,
-                (receipt_id, name, quantity, price_cents, sum_cents),
+                (receipt_id, name, quantity, price_cents or sum_cents, sum_cents),
             )
             inserted_items += 1
+            inserted_sum_cents += sum_cents
+
+        if total_cents == 0 and inserted_sum_cents > 0:
+            conn.execute(
+                """
+                UPDATE receipts
+                SET total_cents = ?
+                WHERE id = ?
+                """,
+                (inserted_sum_cents, receipt_id),
+            )
+            total_cents = inserted_sum_cents
 
     return {
         "receipt_id": receipt_id,
         "items_inserted": inserted_items,
+        "receipt_total": _format_cents(total_cents),
+    }
+
+
+def add_manual_item_to_event(
+    *,
+    event_id: int,
+    user_id: int,
+    name: str,
+    amount: Any,
+    receipt_id: int | None = None,
+) -> dict[str, Any]:
+    item_name = _clean_text(name)
+    if not item_name:
+        raise ValueError("Название позиции обязательно.")
+
+    amount_cents = _parse_money_to_cents(amount)
+    if amount_cents <= 0:
+        raise ValueError("Стоимость позиции должна быть больше нуля.")
+
+    now = _utc_now_iso()
+
+    with _connect() as conn:
+        if not _is_member(conn, event_id=event_id, user_id=user_id):
+            raise PermissionError("User is not participant of the event.")
+
+        target_receipt_id: int | None = None
+        if receipt_id is not None:
+            row = conn.execute(
+                """
+                SELECT id
+                FROM receipts
+                WHERE id = ? AND event_id = ?
+                """,
+                (receipt_id, event_id),
+            ).fetchone()
+            if row is None:
+                raise ValueError("Чек не найден.")
+            target_receipt_id = int(row["id"])
+        else:
+            last_receipt = conn.execute(
+                """
+                SELECT id
+                FROM receipts
+                WHERE event_id = ?
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                (event_id,),
+            ).fetchone()
+            if last_receipt is None:
+                cursor = conn.execute(
+                    """
+                    INSERT INTO receipts (
+                        event_id,
+                        uploaded_by_user_id,
+                        store_name,
+                        total_cents,
+                        receipt_timestamp,
+                        raw_qr,
+                        created_at
+                    ) VALUES (?, ?, ?, 0, NULL, NULL, ?)
+                    """,
+                    (event_id, user_id, "Ручной чек", now),
+                )
+                target_receipt_id = int(cursor.lastrowid)
+            else:
+                target_receipt_id = int(last_receipt["id"])
+
+        cursor = conn.execute(
+            """
+            INSERT INTO receipt_items (receipt_id, name, quantity, price_cents, sum_cents)
+            VALUES (?, ?, 1, ?, ?)
+            """,
+            (target_receipt_id, item_name, amount_cents, amount_cents),
+        )
+        item_id = int(cursor.lastrowid)
+
+        conn.execute(
+            """
+            UPDATE receipts
+            SET total_cents = total_cents + ?
+            WHERE id = ?
+            """,
+            (amount_cents, target_receipt_id),
+        )
+
+    return {
+        "item_id": item_id,
+        "receipt_id": target_receipt_id,
+        "amount": _format_cents(amount_cents),
     }
 
 

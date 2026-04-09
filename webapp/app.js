@@ -6,7 +6,9 @@ const state = {
   dashboard: { events: [], receipts: [] },
   events: [],
   recentReceipts: [],
+  groups: [],
   contacts: [],
+  contactsRequestLink: null,
   createParticipants: [],
   currentEvent: null,
   currentResult: null,
@@ -30,6 +32,7 @@ const elements = {
   eventDateInput: document.getElementById("event-date"),
   createParticipants: document.getElementById("create-participants"),
   addParticipantContact: document.getElementById("add-participant-contact"),
+  addParticipantGroup: document.getElementById("add-participant-group"),
   addParticipantManual: document.getElementById("add-participant-manual"),
 
   eventsList: document.getElementById("events-list"),
@@ -41,6 +44,9 @@ const elements = {
   summaryPerPerson: document.getElementById("summary-per-person"),
   itemsHelper: document.getElementById("items-helper"),
   eventItems: document.getElementById("event-items"),
+  manualItemForm: document.getElementById("manual-item-form"),
+  manualItemName: document.getElementById("manual-item-name"),
+  manualItemAmount: document.getElementById("manual-item-amount"),
   uploadReceiptButton: document.getElementById("upload-receipt-button"),
   receiptFileInput: document.getElementById("receipt-file-input"),
   calculateButton: document.getElementById("calculate-button"),
@@ -53,6 +59,9 @@ const elements = {
   profileAvatar: document.getElementById("profile-avatar"),
   profileName: document.getElementById("profile-name"),
   profileUsername: document.getElementById("profile-username"),
+  profileCustomName: document.getElementById("profile-custom-name"),
+  profileTelegram: document.getElementById("profile-telegram"),
+  profileSaveName: document.getElementById("profile-save-name"),
   statEvents: document.getElementById("stat-events"),
   statParticipants: document.getElementById("stat-participants"),
   statTotal: document.getElementById("stat-total"),
@@ -60,6 +69,11 @@ const elements = {
   contactsModal: document.getElementById("contacts-modal"),
   contactsList: document.getElementById("contacts-list"),
   closeContactsModal: document.getElementById("close-contacts-modal"),
+  requestContactsButton: document.getElementById("request-contacts-button"),
+
+  groupsModal: document.getElementById("groups-modal"),
+  groupsList: document.getElementById("groups-list"),
+  closeGroupsModal: document.getElementById("close-groups-modal"),
 
   bottomPlus: document.getElementById("bottom-plus"),
 };
@@ -300,9 +314,15 @@ function renderProfile() {
     return;
   }
 
+  const telegramUsername = profile.username ? `@${profile.username}` : "без username";
   elements.profileName.textContent = profile.display_name || "Профиль";
-  elements.profileUsername.textContent = profile.username ? `@${profile.username}` : "без username";
+  elements.profileUsername.textContent = telegramUsername;
+  elements.profileTelegram.textContent = telegramUsername;
   elements.profileAvatar.textContent = getInitials(profile.display_name || profile.first_name || "П");
+
+  if (document.activeElement !== elements.profileCustomName) {
+    elements.profileCustomName.value = profile.custom_name || "";
+  }
 
   elements.statEvents.textContent = String(stats.events_count || 0);
   elements.statParticipants.textContent = String(stats.participants_count || 0);
@@ -366,8 +386,13 @@ function closeContactsModal() {
 }
 
 function renderContacts() {
+  elements.requestContactsButton.disabled = !state.contactsRequestLink;
+
   if (!state.contacts.length) {
-    renderEmpty(elements.contactsList, "Пока нет контактов. Сначала откройте приложение с других аккаунтов.");
+    renderEmpty(
+      elements.contactsList,
+      "Контактов пока нет. Нажмите кнопку выше, выберите людей в Telegram и вернитесь в Mini App.",
+    );
     return;
   }
 
@@ -389,6 +414,47 @@ function renderContacts() {
       `;
     })
     .join("");
+}
+
+function closeGroupsModal() {
+  elements.groupsModal.classList.add("is-hidden");
+}
+
+function renderGroups() {
+  if (!state.groups.length) {
+    renderEmpty(
+      elements.groupsList,
+      "Нет доступных групп. Добавьте бота в групповой чат и попросите участников отправить /join.",
+    );
+    return;
+  }
+
+  elements.groupsList.innerHTML = state.groups
+    .map(
+      (group) => `
+        <div class="contact-row">
+          <div>
+            <div class="event-card-title">${escapeHtml(group.title)}</div>
+            <div class="event-card-meta">${group.participants_count} участников замечено</div>
+          </div>
+          <button type="button" class="contact-add" data-group-chat-id="${group.chat_id}">
+            Импорт
+          </button>
+        </div>
+      `,
+    )
+    .join("");
+}
+
+async function openGroupsModal() {
+  try {
+    const response = await api("/api/groups");
+    state.groups = response.groups || [];
+    renderGroups();
+    elements.groupsModal.classList.remove("is-hidden");
+  } catch (error) {
+    showToast(error instanceof Error ? error.message : "Не удалось получить список групп.");
+  }
 }
 
 function addParticipantFromContact(contactId) {
@@ -416,6 +482,67 @@ function addParticipantFromContact(contactId) {
 
   renderCreateParticipants();
   renderContacts();
+}
+
+function addParticipantToDraft(participant) {
+  if (!participant) {
+    return;
+  }
+
+  const exists = state.createParticipants.some(
+    (candidate) =>
+      candidate.user_id &&
+      participant.user_id &&
+      Number(candidate.user_id) === Number(participant.user_id),
+  );
+  if (exists) {
+    return;
+  }
+
+  state.createParticipants.push({
+    local_id: participant.user_id
+      ? `participant-${participant.user_id}`
+      : `manual-${Date.now()}-${Math.random()}`,
+    user_id: participant.user_id || null,
+    display_name: participant.display_name,
+    username: participant.username || null,
+    phone: participant.phone || null,
+    is_owner: false,
+  });
+}
+
+async function importGroupParticipants(chatId) {
+  try {
+    const response = await api(`/api/groups/${chatId}/participants`);
+    const participants = response.participants || [];
+    let added = 0;
+    participants.forEach((participant) => {
+      const before = state.createParticipants.length;
+      addParticipantToDraft(participant);
+      if (state.createParticipants.length > before) {
+        added += 1;
+      }
+    });
+    renderCreateParticipants();
+    closeGroupsModal();
+    showToast(added > 0 ? `Импортировано участников: ${added}.` : "Новых участников не найдено.");
+  } catch (error) {
+    showToast(error instanceof Error ? error.message : "Не удалось импортировать участников группы.");
+  }
+}
+
+function requestContactsViaTelegram() {
+  if (!state.contactsRequestLink) {
+    showToast("Ссылка на бота недоступна.");
+    return;
+  }
+
+  if (telegram?.openTelegramLink) {
+    telegram.openTelegramLink(state.contactsRequestLink);
+    return;
+  }
+
+  window.open(state.contactsRequestLink, "_blank", "noopener,noreferrer");
 }
 
 function addManualParticipant() {
@@ -555,6 +682,7 @@ async function refreshBaseData() {
   state.dashboard = dashboardResponse.dashboard || { events: [], receipts: [] };
   state.events = eventsResponse.events || [];
   state.contacts = contactsResponse.contacts || [];
+  state.contactsRequestLink = contactsResponse.request_contacts_link || null;
   state.recentReceipts = receiptsResponse.receipts || [];
 }
 
@@ -692,6 +820,63 @@ async function handleUploadReceipt(file) {
   }
 }
 
+async function handleManualItemSubmit(event) {
+  event.preventDefault();
+  if (!state.currentEvent?.event?.id) {
+    return;
+  }
+
+  const name = elements.manualItemName.value.trim();
+  const amount = elements.manualItemAmount.value.trim();
+
+  if (!name || !amount) {
+    showToast("Введите название и стоимость позиции.");
+    return;
+  }
+
+  try {
+    const response = await apiJson(
+      `/api/events/${state.currentEvent.event.id}/items/manual`,
+      "POST",
+      { name, amount },
+    );
+    state.currentEvent = response.event;
+    renderCurrentEvent();
+    await refreshBaseData();
+    renderHome();
+    renderEvents();
+    renderChecks();
+    renderProfile();
+    elements.manualItemForm.reset();
+    showToast("Позиция добавлена.");
+  } catch (error) {
+    showToast(error instanceof Error ? error.message : "Не удалось добавить позицию.");
+  }
+}
+
+async function handleSaveProfileName() {
+  const customName = elements.profileCustomName.value.trim();
+
+  try {
+    const response = await apiJson("/api/me/name", "POST", {
+      custom_name: customName || null,
+    });
+    state.me = {
+      profile: response.profile,
+      stats: response.stats,
+    };
+    state.stats = response.stats;
+    renderProfile();
+    await refreshBaseData();
+    renderHome();
+    renderEvents();
+    renderChecks();
+    showToast(customName ? "Имя сохранено." : "Имя сброшено на Telegram-имя.");
+  } catch (error) {
+    showToast(error instanceof Error ? error.message : "Не удалось сохранить имя.");
+  }
+}
+
 async function handleCalculate() {
   if (!state.currentEvent?.event?.id) {
     return;
@@ -817,7 +1002,9 @@ function bindEvents() {
   });
 
   elements.addParticipantContact.addEventListener("click", openContactsModal);
+  elements.addParticipantGroup.addEventListener("click", openGroupsModal);
   elements.addParticipantManual.addEventListener("click", addManualParticipant);
+  elements.requestContactsButton.addEventListener("click", requestContactsViaTelegram);
 
   elements.closeContactsModal.addEventListener("click", closeContactsModal);
   elements.contactsModal.addEventListener("click", (event) => {
@@ -834,6 +1021,24 @@ function bindEvents() {
     const contactId = target.dataset.contactId;
     if (contactId) {
       addParticipantFromContact(contactId);
+    }
+  });
+
+  elements.closeGroupsModal.addEventListener("click", closeGroupsModal);
+  elements.groupsModal.addEventListener("click", (event) => {
+    if (event.target === elements.groupsModal) {
+      closeGroupsModal();
+      return;
+    }
+
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) {
+      return;
+    }
+
+    const chatId = target.dataset.groupChatId;
+    if (chatId) {
+      importGroupParticipants(Number(chatId));
     }
   });
 
@@ -914,8 +1119,10 @@ function bindEvents() {
     }
   });
 
+  elements.manualItemForm.addEventListener("submit", handleManualItemSubmit);
   elements.calculateButton.addEventListener("click", handleCalculate);
   elements.shareResultButton.addEventListener("click", handleShareResult);
+  elements.profileSaveName.addEventListener("click", handleSaveProfileName);
 }
 
 async function init() {

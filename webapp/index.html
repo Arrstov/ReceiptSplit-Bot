@@ -16,7 +16,7 @@
         <strong id="topbar-title">SplitCheck</strong>
         <span>мини-приложение</span>
       </div>
-      <button type="button" id="top-right-button" class="topbar-icon">⋯</button>
+      <button type="button" id="top-right-button" class="topbar-icon" aria-label="Обновить">↻</button>
     </header>
 
     <main class="screen-container">
@@ -62,8 +62,10 @@
             <label>Участники</label>
             <div class="row-buttons">
               <button type="button" class="secondary-button" id="add-participant-contact">Добавить из контактов</button>
+              <button type="button" class="secondary-button" id="add-participant-group">Импорт из группы</button>
               <button type="button" class="secondary-button" id="add-participant-manual">Добавить вручную</button>
             </div>
+            <p class="tiny-text">Для импорта из группы: добавьте бота в чат и попросите участников отправить <code>/join</code>.</p>
             <div id="create-participants" class="participant-list"></div>
           </div>
 
@@ -110,6 +112,11 @@
             <h2>Позиции чека</h2>
             <span class="tiny-text" id="items-helper">Выберите, кто брал позиции</span>
           </div>
+          <form id="manual-item-form" class="manual-item-form">
+            <input id="manual-item-name" type="text" maxlength="120" placeholder="Название позиции">
+            <input id="manual-item-amount" type="number" min="0.01" step="0.01" placeholder="Стоимость, ₽">
+            <button type="submit" class="secondary-button">Добавить позицию</button>
+          </form>
           <div id="event-items" class="item-list"></div>
           <button type="button" class="primary-button" id="calculate-button">Рассчитать</button>
         </section>
@@ -149,6 +156,15 @@
           </div>
         </section>
 
+        <section class="panel">
+          <label class="field-label" for="profile-custom-name">Ваше имя в приложении</label>
+          <div class="profile-edit-row">
+            <input id="profile-custom-name" type="text" maxlength="80" placeholder="Например: Миша">
+            <button type="button" id="profile-save-name" class="secondary-button">Сохранить</button>
+          </div>
+          <p class="tiny-text">Ник из Telegram: <span id="profile-telegram">@username</span></p>
+        </section>
+
         <section class="panel stats-grid" id="profile-stats">
           <div>
             <strong id="stat-events">0</strong>
@@ -162,12 +178,6 @@
             <strong id="stat-total">0 ₽</strong>
             <span>Разделено</span>
           </div>
-        </section>
-
-        <section class="panel menu-list">
-          <button type="button">Помощь</button>
-          <button type="button">О приложении</button>
-          <button type="button">Связаться с поддержкой</button>
         </section>
       </section>
     </main>
@@ -187,7 +197,20 @@
         <h3>Контакты</h3>
         <button type="button" id="close-contacts-modal">Закрыть</button>
       </div>
+      <div class="modal-actions">
+        <button type="button" id="request-contacts-button" class="secondary-button">Запросить контакты в Telegram</button>
+      </div>
       <div id="contacts-list" class="contact-list"></div>
+    </div>
+  </aside>
+
+  <aside id="groups-modal" class="modal is-hidden">
+    <div class="modal-sheet">
+      <div class="modal-head">
+        <h3>Группы</h3>
+        <button type="button" id="close-groups-modal">Закрыть</button>
+      </div>
+      <div id="groups-list" class="contact-list"></div>
     </div>
   </aside>
 
