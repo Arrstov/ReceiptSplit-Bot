@@ -113,6 +113,8 @@ async def handle_start(message: Message) -> None:
         return
 
     await message.answer(text, reply_markup=keyboard)
+    if message.chat.type == "private":
+        await _send_contacts_request_prompt(message)
 
 
 @dp.message(Command("contacts"), F.chat.type == "private")
@@ -181,6 +183,11 @@ async def handle_web_app_data(message: Message) -> None:
         payload = json.loads(message.web_app_data.data)
     except json.JSONDecodeError:
         await message.answer("Получил данные из Mini App, но не смог разобрать JSON.")
+        return
+
+    action = payload.get("action")
+    if action == "request_contacts":
+        await _send_contacts_request_prompt(message)
         return
 
     receipt_name = payload.get("receipt_name", "Без названия")

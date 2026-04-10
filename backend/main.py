@@ -29,6 +29,7 @@ from backend.mvp_store import (
     list_recent_receipts_for_user,
     set_item_assignment,
     toggle_my_item_assignment,
+    update_event,
     update_profile_name,
     upsert_profile,
 )
@@ -162,11 +163,13 @@ async def _get_actor(
     return upsert_profile(user)
 
 
-def _build_contacts_request_link(request: Request) -> str | None:
+def _build_contacts_request_link(request: Request) -> tuple[str | None, str | None]:
     bot_username = getattr(request.app.state, "bot_username", None)
     if not bot_username:
-        return None
-    return f"https://t.me/{bot_username}?start=contacts"
+        return None, None
+    https_link = f"https://t.me/{bot_username}?start=contacts"
+    tg_link = f"tg://resolve?domain={bot_username}&start=contacts"
+    return https_link, tg_link
 
 
 def _build_items_preview(items_lookup: dict[str, Any], *, limit: int = 8) -> str:
@@ -329,9 +332,11 @@ async def set_my_name(request: Request, payload: UpdateProfileNameInput) -> dict
 async def get_contacts(request: Request) -> dict[str, Any]:
     actor = await _get_actor(request)
     contacts = list_contacts_for_user(actor["user_id"], limit=40)
+    request_contacts_link, request_contacts_tg_link = _build_contacts_request_link(request)
     return {
         "contacts": contacts,
-        "request_contacts_link": _build_contacts_request_link(request),
+        "request_contacts_link": request_contacts_link,
+        "request_contacts_tg_link": request_contacts_tg_link,
         "request_contacts_command": "/contacts",
     }
 
@@ -395,6 +400,37 @@ async def create_event_route(request: Request, payload: CreateEventInput) -> dic
         event_date=payload.event_date,
         participants=participants_payload,
     )
+    return {
+        "status": "ok",
+        "event": event,
+    }
+
+
+@app.put("/api/events/{event_id}")
+async def update_event_route(
+    request: Request,
+    event_id: int,
+    payload: CreateEventInput,
+) -> dict[str, Any]:
+    actor = await _get_actor(request)
+    title = payload.title.strip()
+    if len(title) < 2:
+        raise HTTPException(status_code=400, detail="Название события слишком короткое.")
+
+    participants_payload = [participant.model_dump() for participant in payload.participants]
+    try:
+        event = update_event(
+            event_id=event_id,
+            editor_user_id=actor["user_id"],
+            title=title,
+            event_date=payload.event_date,
+            participants=participants_payload,
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
     return {
         "status": "ok",
         "event": event,

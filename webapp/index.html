@@ -150,19 +150,13 @@
       <section id="view-profile" class="view">
         <section class="panel profile-top">
           <div class="avatar-circle" id="profile-avatar">П</div>
-          <div>
-            <h2 id="profile-name">Профиль</h2>
+          <div class="profile-name-wrap">
+            <div class="profile-name-row">
+              <h2 id="profile-name">Профиль</h2>
+              <button type="button" id="profile-edit-name" class="secondary-pill profile-edit-trigger">✎</button>
+            </div>
             <p id="profile-username">@username</p>
           </div>
-        </section>
-
-        <section class="panel">
-          <label class="field-label" for="profile-custom-name">Ваше имя в приложении</label>
-          <div class="profile-edit-row">
-            <input id="profile-custom-name" type="text" maxlength="80" placeholder="Например: Миша">
-            <button type="button" id="profile-save-name" class="secondary-button">Сохранить</button>
-          </div>
-          <p class="tiny-text">Ник из Telegram: <span id="profile-telegram">@username</span></p>
         </section>
 
         <section class="panel stats-grid" id="profile-stats">

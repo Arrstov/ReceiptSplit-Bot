@@ -485,6 +485,19 @@ input[type="date"] {
   gap: 12px;
 }
 
+.profile-name-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.profile-name-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .profile-top h2 {
   margin: 0;
 }
@@ -492,6 +505,13 @@ input[type="date"] {
 .profile-top p {
   margin: 4px 0 0;
   color: var(--muted);
+}
+
+.profile-edit-trigger {
+  padding: 7px 10px;
+  border-radius: 999px;
+  line-height: 1;
+  min-width: auto;
 }
 
 .field-label {

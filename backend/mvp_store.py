@@ -652,6 +652,145 @@ def create_event(
     return event
 
 
+def update_event(
+    *,
+    event_id: int,
+    editor_user_id: int,
+    title: str,
+    event_date: str | None,
+    participants: list[dict[str, Any]],
+) -> dict[str, Any]:
+    updated_at = _utc_now_iso()
+
+    with _connect() as conn:
+        event_row = conn.execute(
+            """
+            SELECT id, owner_user_id
+            FROM events
+            WHERE id = ?
+            """,
+            (event_id,),
+        ).fetchone()
+        if event_row is None:
+            raise ValueError("Event not found.")
+
+        if not _is_admin(conn, event_id=event_id, user_id=editor_user_id):
+            raise PermissionError("Only admin can edit event.")
+
+        owner_user_id = int(event_row["owner_user_id"])
+
+        conn.execute(
+            """
+            UPDATE events
+            SET title = ?, event_date = ?
+            WHERE id = ?
+            """,
+            (title.strip(), event_date, event_id),
+        )
+
+        conn.execute(
+            """
+            DELETE FROM event_members
+            WHERE event_id = ?
+              AND (user_id IS NULL OR user_id != ?)
+            """,
+            (event_id, owner_user_id),
+        )
+
+        for participant in participants:
+            participant_user_id = participant.get("user_id")
+            if participant_user_id is not None and int(participant_user_id) == owner_user_id:
+                continue
+
+            if participant_user_id is not None:
+                participant_user_id = int(participant_user_id)
+                existing_profile = conn.execute(
+                    """
+                    SELECT user_id, username, first_name, last_name, phone, custom_name
+                    FROM profiles
+                    WHERE user_id = ?
+                    """,
+                    (participant_user_id,),
+                ).fetchone()
+
+                if existing_profile is None:
+                    fallback_username = _clean_text(participant.get("username"))
+                    fallback_name = _clean_text(participant.get("display_name"))
+                    conn.execute(
+                        """
+                        INSERT OR IGNORE INTO profiles (
+                            user_id,
+                            username,
+                            first_name,
+                            last_name,
+                            phone,
+                            custom_name,
+                            updated_at
+                        ) VALUES (?, ?, ?, NULL, ?, ?, ?)
+                        """,
+                        (
+                            participant_user_id,
+                            fallback_username,
+                            fallback_name,
+                            _clean_text(participant.get("phone")),
+                            None,
+                            updated_at,
+                        ),
+                    )
+                    existing_profile = conn.execute(
+                        """
+                        SELECT user_id, username, first_name, last_name, phone, custom_name
+                        FROM profiles
+                        WHERE user_id = ?
+                        """,
+                        (participant_user_id,),
+                    ).fetchone()
+                if existing_profile is None:
+                    continue
+
+                profile_data = dict(existing_profile)
+                conn.execute(
+                    """
+                    INSERT OR IGNORE INTO event_members (
+                        event_id, user_id, display_name, username, phone, is_admin, created_at
+                    ) VALUES (?, ?, ?, ?, ?, 0, ?)
+                    """,
+                    (
+                        event_id,
+                        participant_user_id,
+                        _display_name_from_profile(profile_data),
+                        profile_data.get("username"),
+                        profile_data.get("phone"),
+                        updated_at,
+                    ),
+                )
+                continue
+
+            manual_name = _clean_text(participant.get("display_name"))
+            if not manual_name:
+                continue
+
+            conn.execute(
+                """
+                INSERT INTO event_members (
+                    event_id, user_id, display_name, username, phone, is_admin, created_at
+                ) VALUES (?, NULL, ?, ?, ?, 0, ?)
+                """,
+                (
+                    event_id,
+                    manual_name,
+                    _clean_text(participant.get("username")),
+                    _clean_text(participant.get("phone")),
+                    updated_at,
+                ),
+            )
+
+    event = get_event_for_user(event_id=event_id, user_id=editor_user_id)
+    if event is None:
+        raise ValueError("Failed to load updated event.")
+    return event
+
+
 def _is_member(conn: sqlite3.Connection, *, event_id: int, user_id: int) -> bool:
     row = conn.execute(
         """

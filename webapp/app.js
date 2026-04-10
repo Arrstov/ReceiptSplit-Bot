@@ -9,7 +9,10 @@ const state = {
   groups: [],
   contacts: [],
   contactsRequestLink: null,
+  contactsRequestTgLink: null,
   createParticipants: [],
+  createMode: "create",
+  editingEventId: null,
   currentEvent: null,
   currentResult: null,
   currentView: "home",
@@ -44,6 +47,7 @@ const elements = {
   summaryPerPerson: document.getElementById("summary-per-person"),
   itemsHelper: document.getElementById("items-helper"),
   eventItems: document.getElementById("event-items"),
+  eventEditButton: document.getElementById("event-edit-button"),
   manualItemForm: document.getElementById("manual-item-form"),
   manualItemName: document.getElementById("manual-item-name"),
   manualItemAmount: document.getElementById("manual-item-amount"),
@@ -59,9 +63,7 @@ const elements = {
   profileAvatar: document.getElementById("profile-avatar"),
   profileName: document.getElementById("profile-name"),
   profileUsername: document.getElementById("profile-username"),
-  profileCustomName: document.getElementById("profile-custom-name"),
-  profileTelegram: document.getElementById("profile-telegram"),
-  profileSaveName: document.getElementById("profile-save-name"),
+  profileEditName: document.getElementById("profile-edit-name"),
   statEvents: document.getElementById("stat-events"),
   statParticipants: document.getElementById("stat-participants"),
   statTotal: document.getElementById("stat-total"),
@@ -202,7 +204,7 @@ function updateTopbar() {
   } else if (view === "result") {
     elements.topbarTitle.textContent = "Результат";
   } else if (view === "create") {
-    elements.topbarTitle.textContent = "Новое событие";
+    elements.topbarTitle.textContent = state.createMode === "edit" ? "Изменить событие" : "Новое событие";
   } else if (view === "events") {
     elements.topbarTitle.textContent = "События";
   } else if (view === "checks") {
@@ -308,21 +310,18 @@ function renderChecks() {
 
 function renderProfile() {
   const profile = state.me?.profile;
-  const stats = state.stats || state.me?.stats;
+  const stats = state.stats || state.me?.stats || {};
 
-  if (!profile || !stats) {
+  if (!profile) {
     return;
   }
 
-  const telegramUsername = profile.username ? `@${profile.username}` : "без username";
-  elements.profileName.textContent = profile.display_name || "Профиль";
-  elements.profileUsername.textContent = telegramUsername;
-  elements.profileTelegram.textContent = telegramUsername;
-  elements.profileAvatar.textContent = getInitials(profile.display_name || profile.first_name || "П");
-
-  if (document.activeElement !== elements.profileCustomName) {
-    elements.profileCustomName.value = profile.custom_name || "";
-  }
+  const telegramUsername = profile.username ? `@${profile.username}` : "";
+  const fullName = [profile.first_name, profile.last_name].filter(Boolean).join(" ").trim();
+  const visibleName = profile.display_name || profile.custom_name || fullName || telegramUsername || "Профиль";
+  elements.profileName.textContent = visibleName;
+  elements.profileUsername.textContent = telegramUsername || "без username";
+  elements.profileAvatar.textContent = getInitials(visibleName);
 
   elements.statEvents.textContent = String(stats.events_count || 0);
   elements.statParticipants.textContent = String(stats.participants_count || 0);
@@ -330,6 +329,9 @@ function renderProfile() {
 }
 
 function resetCreateDraft() {
+  state.createMode = "create";
+  state.editingEventId = null;
+
   const profile = state.me?.profile;
   if (!profile) {
     state.createParticipants = [];
@@ -348,7 +350,40 @@ function resetCreateDraft() {
 
   elements.eventTitleInput.value = "";
   elements.eventDateInput.value = "";
+  elements.createSubmitButton.textContent = "Создать событие";
   renderCreateParticipants();
+}
+
+function openCreateForNew() {
+  resetCreateDraft();
+  openView("create");
+}
+
+function openCreateForEdit() {
+  if (!state.currentEvent?.event) {
+    showToast("Событие не загружено.");
+    return;
+  }
+
+  const detail = state.currentEvent;
+  const participants = detail.participants || [];
+
+  state.createMode = "edit";
+  state.editingEventId = detail.event.id;
+  state.createParticipants = participants.map((participant) => ({
+    local_id: participant.user_id ? `participant-${participant.user_id}` : `member-${participant.id}`,
+    user_id: participant.user_id || null,
+    display_name: participant.display_name,
+    username: participant.username || null,
+    phone: participant.phone || null,
+    is_owner: Boolean(participant.is_owner),
+  }));
+
+  elements.eventTitleInput.value = detail.event.title || "";
+  elements.eventDateInput.value = detail.event.event_date || "";
+  elements.createSubmitButton.textContent = "Сохранить изменения";
+  renderCreateParticipants();
+  openView("create");
 }
 
 function renderCreateParticipants() {
@@ -386,7 +421,11 @@ function closeContactsModal() {
 }
 
 function renderContacts() {
-  elements.requestContactsButton.disabled = !state.contactsRequestLink;
+  elements.requestContactsButton.disabled = !(
+    telegram?.sendData ||
+    state.contactsRequestLink ||
+    state.contactsRequestTgLink
+  );
 
   if (!state.contacts.length) {
     renderEmpty(
@@ -532,17 +571,42 @@ async function importGroupParticipants(chatId) {
 }
 
 function requestContactsViaTelegram() {
-  if (!state.contactsRequestLink) {
-    showToast("Ссылка на бота недоступна.");
-    return;
+  const canSendData = Boolean(telegram?.sendData && telegram?.initDataUnsafe?.query_id);
+  if (canSendData) {
+    try {
+      showToast("Отправил запрос в чат с ботом.");
+      telegram.sendData(
+        JSON.stringify({
+          action: "request_contacts",
+          source: "mini_app",
+        }),
+      );
+      return;
+    } catch {
+      // sendData может быть недоступен для текущего способа открытия Mini App.
+    }
   }
 
-  if (telegram?.openTelegramLink) {
+  if (telegram?.showAlert) {
+    telegram.showAlert("Сейчас откроется чат с ботом. Нажмите Start, затем выберите контакты.");
+  }
+
+  if (telegram?.openTelegramLink && state.contactsRequestLink) {
     telegram.openTelegramLink(state.contactsRequestLink);
     return;
   }
 
-  window.open(state.contactsRequestLink, "_blank", "noopener,noreferrer");
+  if (telegram?.openLink && state.contactsRequestTgLink) {
+    telegram.openLink(state.contactsRequestTgLink);
+    return;
+  }
+
+  if (state.contactsRequestLink) {
+    window.open(state.contactsRequestLink, "_blank", "noopener,noreferrer");
+    return;
+  }
+
+  showToast("Ссылка на бота недоступна.");
 }
 
 function addManualParticipant() {
@@ -585,9 +649,11 @@ function renderCurrentEvent() {
   const summary = detail.summary || {};
   const items = detail.items || [];
   const canAssign = Boolean(detail.permissions?.is_admin);
+  const canEditEvent = Boolean(detail.permissions?.is_admin);
 
   elements.eventTitleText.textContent = event.title;
   elements.eventSubtitle.textContent = `${participants.length} участников • ${formatDate(event.event_date || event.created_at)}`;
+  elements.eventEditButton.style.display = canEditEvent ? "" : "none";
   elements.summaryTotal.textContent = formatMoney(summary.total_amount || 0);
   elements.summarySelected.textContent = formatMoney(summary.selected_amount || 0);
   elements.summaryPerPerson.textContent = formatMoney(summary.per_person_amount || 0);
@@ -683,6 +749,7 @@ async function refreshBaseData() {
   state.events = eventsResponse.events || [];
   state.contacts = contactsResponse.contacts || [];
   state.contactsRequestLink = contactsResponse.request_contacts_link || null;
+  state.contactsRequestTgLink = contactsResponse.request_contacts_tg_link || null;
   state.recentReceipts = receiptsResponse.receipts || [];
 }
 
@@ -720,20 +787,35 @@ async function handleCreateEventSubmit(event) {
       participants,
     };
 
-    const response = await apiJson("/api/events", "POST", payload);
+    let response;
+    if (state.createMode === "edit" && state.editingEventId) {
+      response = await apiJson(`/api/events/${state.editingEventId}`, "PUT", payload);
+    } else {
+      response = await apiJson("/api/events", "POST", payload);
+    }
+
     await refreshBaseData();
     renderHome();
     renderEvents();
     renderChecks();
     renderProfile();
-    resetCreateDraft();
-    showToast("Событие создано.");
+    const responseEventId = response?.event?.event?.id;
 
-    const newEventId = response?.event?.event?.id;
-    if (newEventId) {
-      await openEvent(newEventId);
+    if (state.createMode === "edit") {
+      showToast("Событие обновлено.");
+      if (responseEventId) {
+        await openEvent(responseEventId);
+      } else {
+        openView("events");
+      }
     } else {
-      openView("events");
+      resetCreateDraft();
+      showToast("Событие создано.");
+      if (responseEventId) {
+        await openEvent(responseEventId);
+      } else {
+        openView("events");
+      }
     }
   } catch (error) {
     showToast(error instanceof Error ? error.message : "Ошибка создания события.");
@@ -854,8 +936,14 @@ async function handleManualItemSubmit(event) {
   }
 }
 
-async function handleSaveProfileName() {
-  const customName = elements.profileCustomName.value.trim();
+async function handleProfileNameEdit() {
+  const currentProfile = state.me?.profile;
+  const currentName = currentProfile?.custom_name || currentProfile?.display_name || "";
+  const nextNameRaw = window.prompt("Введите имя, которое будет видно в событиях", currentName);
+  if (nextNameRaw === null) {
+    return;
+  }
+  const customName = nextNameRaw.trim();
 
   try {
     const response = await apiJson("/api/me/name", "POST", {
@@ -941,6 +1029,11 @@ function bindEvents() {
       return;
     }
 
+    if (state.currentView === "create" && state.createMode === "edit") {
+      openView("event");
+      return;
+    }
+
     if (state.currentView === "result") {
       openView("event");
       return;
@@ -972,7 +1065,7 @@ function bindEvents() {
     }
   });
 
-  elements.homeCreateCard.addEventListener("click", () => openView("create"));
+  elements.homeCreateCard.addEventListener("click", openCreateForNew);
 
   document.querySelectorAll("[data-open-view]").forEach((button) => {
     button.addEventListener("click", () => openView(button.dataset.openView));
@@ -982,7 +1075,7 @@ function bindEvents() {
     button.addEventListener("click", () => openView(button.dataset.nav));
   });
 
-  elements.bottomPlus.addEventListener("click", () => openView("create"));
+  elements.bottomPlus.addEventListener("click", openCreateForNew);
 
   elements.createForm.addEventListener("submit", handleCreateEventSubmit);
 
@@ -1122,7 +1215,8 @@ function bindEvents() {
   elements.manualItemForm.addEventListener("submit", handleManualItemSubmit);
   elements.calculateButton.addEventListener("click", handleCalculate);
   elements.shareResultButton.addEventListener("click", handleShareResult);
-  elements.profileSaveName.addEventListener("click", handleSaveProfileName);
+  elements.profileEditName.addEventListener("click", handleProfileNameEdit);
+  elements.eventEditButton.addEventListener("click", openCreateForEdit);
 }
 
 async function init() {
