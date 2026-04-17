@@ -109,21 +109,6 @@ PROVERKACHEKA_API_TOKEN=your_proverkacheka_api_token_here
 PROVERKACHEKA_API_URL=https://proverkacheka.com/api/v1/check/get
 PROVERKACHEKA_TIMEOUT_SECONDS=20
 ```
-
-## Как создать бота через BotFather
-
-1. Откройте Telegram и найдите `@BotFather`
-2. Отправьте команду `/newbot`
-3. Укажите имя бота
-4. Укажите уникальный username, который заканчивается на `bot`
-5. Скопируйте выданный токен
-6. Вставьте токен в `.env` в переменную `BOT_TOKEN`
-
-Опционально:
-
-- если хотите, чтобы Mini App открывался ещё и с профиля бота или через меню, настройте это в `@BotFather`
-- для текущего MVP это не обязательно, потому что запуск уже работает через inline-кнопку `web_app`
-
 ## Установка и запуск
 
 ### 1. Создайте виртуальное окружение
