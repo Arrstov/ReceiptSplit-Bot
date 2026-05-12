@@ -52,8 +52,10 @@ const elements = {
   manualItemForm: document.getElementById("manual-item-form"),
   manualItemName: document.getElementById("manual-item-name"),
   manualItemAmount: document.getElementById("manual-item-amount"),
-  uploadReceiptButton: document.getElementById("upload-receipt-button"),
-  receiptFileInput: document.getElementById("receipt-file-input"),
+  uploadReceiptCameraButton: document.getElementById("upload-receipt-camera-button"),
+  uploadReceiptGalleryButton: document.getElementById("upload-receipt-gallery-button"),
+  receiptCameraInput: document.getElementById("receipt-camera-input"),
+  receiptGalleryInput: document.getElementById("receipt-gallery-input"),
   calculateButton: document.getElementById("calculate-button"),
 
   resultList: document.getElementById("result-list"),
@@ -168,6 +170,18 @@ function showConfirm(message, { title = "Подтверждение", okText = "
 
     resolve(window.confirm(message));
   });
+}
+
+function setUploadControlsLoading(isLoading) {
+  const cameraText = isLoading ? "Загрузка..." : "Сделать фото";
+  const galleryText = isLoading ? "Загрузка..." : "Выбрать из галереи";
+
+  elements.uploadReceiptCameraButton.textContent = cameraText;
+  elements.uploadReceiptGalleryButton.textContent = galleryText;
+  elements.uploadReceiptCameraButton.classList.toggle("is-disabled", isLoading);
+  elements.uploadReceiptGalleryButton.classList.toggle("is-disabled", isLoading);
+  elements.receiptCameraInput.disabled = isLoading;
+  elements.receiptGalleryInput.disabled = isLoading;
 }
 
 async function api(path, options = {}) {
@@ -989,8 +1003,7 @@ async function handleUploadReceipt(file) {
     formData.append("init_data", telegram.initData);
   }
 
-  elements.uploadReceiptButton.disabled = true;
-  elements.uploadReceiptButton.textContent = "Загрузка...";
+  setUploadControlsLoading(true);
 
   try {
     const response = await api(`/api/events/${state.currentEvent.event.id}/receipts/upload`, {
@@ -1010,9 +1023,9 @@ async function handleUploadReceipt(file) {
   } catch (error) {
     showToast(error instanceof Error ? error.message : "Не удалось загрузить чек.");
   } finally {
-    elements.uploadReceiptButton.disabled = false;
-    elements.uploadReceiptButton.textContent = "Загрузить чек";
-    elements.receiptFileInput.value = "";
+    setUploadControlsLoading(false);
+    elements.receiptCameraInput.value = "";
+    elements.receiptGalleryInput.value = "";
   }
 }
 
@@ -1383,12 +1396,15 @@ function bindEvents() {
   elements.homeReceipts.addEventListener("click", eventCardHandler);
   elements.checksList.addEventListener("click", eventCardHandler);
 
-  elements.uploadReceiptButton.addEventListener("click", () => {
-    elements.receiptFileInput.click();
+  elements.receiptCameraInput.addEventListener("change", () => {
+    const file = elements.receiptCameraInput.files?.[0];
+    if (file) {
+      handleUploadReceipt(file);
+    }
   });
 
-  elements.receiptFileInput.addEventListener("change", () => {
-    const file = elements.receiptFileInput.files?.[0];
+  elements.receiptGalleryInput.addEventListener("change", () => {
+    const file = elements.receiptGalleryInput.files?.[0];
     if (file) {
       handleUploadReceipt(file);
     }

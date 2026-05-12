@@ -103,8 +103,12 @@
               <span>за человека</span>
             </div>
           </div>
-          <button type="button" class="primary-button" id="upload-receipt-button">Загрузить чек</button>
-          <input id="receipt-file-input" type="file" class="visually-hidden" accept="image/*" capture="environment">
+          <div class="upload-actions">
+            <label class="primary-button file-trigger" id="upload-receipt-camera-button" for="receipt-camera-input">Сделать фото</label>
+            <label class="secondary-button file-trigger" id="upload-receipt-gallery-button" for="receipt-gallery-input">Выбрать из галереи</label>
+          </div>
+          <input id="receipt-camera-input" type="file" class="file-input-native" accept="image/*" capture="environment">
+          <input id="receipt-gallery-input" type="file" class="file-input-native" accept="image/*">
         </section>
 
         <section class="panel">

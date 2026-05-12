@@ -270,6 +270,19 @@ input[type="date"] {
   cursor: pointer;
 }
 
+.file-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+
+.file-trigger.is-disabled {
+  opacity: 0.65;
+  cursor: progress;
+  pointer-events: none;
+}
+
 .primary-button {
   background: linear-gradient(135deg, #3e95ff, #2e74e2);
   color: #fff;
@@ -363,6 +376,12 @@ input[type="date"] {
 .summary-grid span {
   color: var(--muted);
   font-size: 0.76rem;
+}
+
+.upload-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
 }
 
 .manual-item-form {
@@ -756,6 +775,18 @@ input[type="date"] {
   display: none !important;
 }
 
+.file-input-native {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 .modal-sheet {
   width: min(100%, 480px);
   margin: 0 auto;
@@ -837,6 +868,10 @@ input[type="date"] {
   }
 
   .manual-item-form {
+    grid-template-columns: 1fr;
+  }
+
+  .upload-actions {
     grid-template-columns: 1fr;
   }
 
