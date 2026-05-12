@@ -18,6 +18,7 @@ from backend.mvp_store import (
     add_receipt_to_event,
     calculate_event,
     create_event,
+    delete_event_item,
     get_dashboard,
     get_event_for_user,
     get_profile_stats,
@@ -30,6 +31,7 @@ from backend.mvp_store import (
     set_item_assignment,
     toggle_my_item_assignment,
     update_event,
+    update_event_item,
     update_profile_name,
     upsert_profile,
 )
@@ -69,6 +71,11 @@ class ManualItemInput(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     amount: str
     receipt_id: int | None = None
+
+
+class UpdateItemInput(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    amount: str
 
 
 class UpdateProfileNameInput(BaseModel):
@@ -527,6 +534,71 @@ async def add_manual_item(
     return {
         "status": "ok",
         "saved": saved,
+        "event": event,
+    }
+
+
+@app.put("/api/events/{event_id}/items/{item_id}")
+async def update_item(
+    request: Request,
+    event_id: int,
+    item_id: int,
+    payload: UpdateItemInput,
+) -> dict[str, Any]:
+    actor = await _get_actor(request)
+    try:
+        saved = update_event_item(
+            event_id=event_id,
+            item_id=item_id,
+            user_id=actor["user_id"],
+            name=payload.name,
+            amount=payload.amount,
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValueError as exc:
+        detail = str(exc)
+        status_code = 404 if detail in {"Событие не найдено.", "Позиция не найдена."} else 400
+        raise HTTPException(status_code=status_code, detail=detail) from exc
+
+    event = get_event_for_user(event_id=event_id, user_id=actor["user_id"])
+    if event is None:
+        raise HTTPException(status_code=404, detail="Событие не найдено.")
+
+    return {
+        "status": "ok",
+        "saved": saved,
+        "event": event,
+    }
+
+
+@app.delete("/api/events/{event_id}/items/{item_id}")
+async def delete_item(
+    request: Request,
+    event_id: int,
+    item_id: int,
+) -> dict[str, Any]:
+    actor = await _get_actor(request)
+    try:
+        deleted = delete_event_item(
+            event_id=event_id,
+            item_id=item_id,
+            user_id=actor["user_id"],
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValueError as exc:
+        detail = str(exc)
+        status_code = 404 if detail in {"Событие не найдено.", "Позиция не найдена."} else 400
+        raise HTTPException(status_code=status_code, detail=detail) from exc
+
+    event = get_event_for_user(event_id=event_id, user_id=actor["user_id"])
+    if event is None:
+        raise HTTPException(status_code=404, detail="Событие не найдено.")
+
+    return {
+        "status": "ok",
+        "deleted": deleted,
         "event": event,
     }
 

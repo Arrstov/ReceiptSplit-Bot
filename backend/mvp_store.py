@@ -1062,6 +1062,8 @@ def get_event_for_user(event_id: int, user_id: int) -> dict[str, Any] | None:
         },
         "permissions": {
             "is_admin": any(participant["is_me"] and participant["is_admin"] for participant in participants),
+            "is_owner": owner_user_id == user_id,
+            "can_edit_items": owner_user_id == user_id,
             "me_member_id": me_member_id,
         },
     }
@@ -1243,6 +1245,153 @@ def add_manual_item_to_event(
     }
 
 
+def update_event_item(
+    *,
+    event_id: int,
+    item_id: int,
+    user_id: int,
+    name: str,
+    amount: Any,
+) -> dict[str, Any]:
+    item_name = _clean_text(name)
+    if not item_name:
+        raise ValueError("Название позиции обязательно.")
+
+    amount_cents = _parse_money_to_cents(amount)
+    if amount_cents <= 0:
+        raise ValueError("Стоимость позиции должна быть больше нуля.")
+
+    with _connect() as conn:
+        event_row = conn.execute(
+            """
+            SELECT owner_user_id
+            FROM events
+            WHERE id = ?
+            """,
+            (event_id,),
+        ).fetchone()
+        if event_row is None:
+            raise ValueError("Событие не найдено.")
+
+        if int(event_row["owner_user_id"]) != int(user_id):
+            raise PermissionError("Только создатель события может редактировать позиции.")
+
+        item_row = conn.execute(
+            """
+            SELECT
+                i.id,
+                i.receipt_id,
+                i.quantity,
+                i.sum_cents,
+                r.total_cents
+            FROM receipt_items i
+            JOIN receipts r ON r.id = i.receipt_id
+            WHERE i.id = ? AND r.event_id = ?
+            """,
+            (item_id, event_id),
+        ).fetchone()
+        if item_row is None:
+            raise ValueError("Позиция не найдена.")
+
+        quantity = float(item_row["quantity"] or 1)
+        price_cents = amount_cents
+        if quantity > 0:
+            price_cents = int(round(amount_cents / quantity))
+
+        previous_sum_cents = int(item_row["sum_cents"] or 0)
+        updated_receipt_total = int(item_row["total_cents"] or 0) - previous_sum_cents + amount_cents
+
+        conn.execute(
+            """
+            UPDATE receipt_items
+            SET name = ?, price_cents = ?, sum_cents = ?
+            WHERE id = ?
+            """,
+            (item_name, price_cents, amount_cents, item_id),
+        )
+
+        conn.execute(
+            """
+            UPDATE receipts
+            SET total_cents = ?
+            WHERE id = ?
+            """,
+            (updated_receipt_total, int(item_row["receipt_id"])),
+        )
+
+    return {
+        "item_id": item_id,
+        "receipt_id": int(item_row["receipt_id"]),
+        "amount": _format_cents(amount_cents),
+        "name": item_name,
+    }
+
+
+def delete_event_item(
+    *,
+    event_id: int,
+    item_id: int,
+    user_id: int,
+) -> dict[str, Any]:
+    with _connect() as conn:
+        event_row = conn.execute(
+            """
+            SELECT owner_user_id
+            FROM events
+            WHERE id = ?
+            """,
+            (event_id,),
+        ).fetchone()
+        if event_row is None:
+            raise ValueError("Событие не найдено.")
+
+        if int(event_row["owner_user_id"]) != int(user_id):
+            raise PermissionError("Только создатель события может удалять позиции.")
+
+        item_row = conn.execute(
+            """
+            SELECT
+                i.id,
+                i.receipt_id,
+                i.name,
+                i.sum_cents,
+                r.total_cents
+            FROM receipt_items i
+            JOIN receipts r ON r.id = i.receipt_id
+            WHERE i.id = ? AND r.event_id = ?
+            """,
+            (item_id, event_id),
+        ).fetchone()
+        if item_row is None:
+            raise ValueError("Позиция не найдена.")
+
+        previous_sum_cents = int(item_row["sum_cents"] or 0)
+        updated_receipt_total = max(0, int(item_row["total_cents"] or 0) - previous_sum_cents)
+
+        conn.execute(
+            """
+            DELETE FROM receipt_items
+            WHERE id = ?
+            """,
+            (item_id,),
+        )
+
+        conn.execute(
+            """
+            UPDATE receipts
+            SET total_cents = ?
+            WHERE id = ?
+            """,
+            (updated_receipt_total, int(item_row["receipt_id"])),
+        )
+
+    return {
+        "item_id": item_id,
+        "receipt_id": int(item_row["receipt_id"]),
+        "name": item_row["name"],
+    }
+
+
 def toggle_my_item_assignment(*, event_id: int, item_id: int, user_id: int) -> bool:
     with _connect() as conn:
         member_row = conn.execute(
@@ -1374,7 +1523,7 @@ def calculate_event(event_id: int, user_id: int) -> dict[str, Any]:
 
         items_rows = conn.execute(
             """
-            SELECT i.id, i.sum_cents
+            SELECT i.id, i.name, i.quantity, i.sum_cents
             FROM receipt_items i
             JOIN receipts r ON r.id = i.receipt_id
             WHERE r.event_id = ?
@@ -1394,30 +1543,47 @@ def calculate_event(event_id: int, user_id: int) -> dict[str, Any]:
         ).fetchall()
 
     totals_by_member: dict[int, int] = {int(row["id"]): 0 for row in participants_rows}
+    items_by_member: dict[int, list[dict[str, Any]]] = {
+        int(row["id"]): [] for row in participants_rows
+    }
     assignments_by_item: dict[int, list[int]] = {}
     for row in assignments_rows:
         assignments_by_item.setdefault(int(row["item_id"]), []).append(int(row["member_id"]))
 
     total_receipt_cents = 0
     selected_cents = 0
+    unassigned_items_count = 0
     for row in items_rows:
         item_id = int(row["id"])
         item_sum_cents = int(row["sum_cents"] or 0)
         total_receipt_cents += item_sum_cents
         member_ids = assignments_by_item.get(item_id, [])
         if not member_ids:
+            unassigned_items_count += 1
             continue
 
         selected_cents += item_sum_cents
         share = item_sum_cents // len(member_ids)
         remainder = item_sum_cents % len(member_ids)
         for index, member_id in enumerate(member_ids):
-            totals_by_member[member_id] += share + (1 if index < remainder else 0)
+            share_amount_cents = share + (1 if index < remainder else 0)
+            totals_by_member[member_id] += share_amount_cents
+            items_by_member[member_id].append(
+                {
+                    "item_id": item_id,
+                    "name": row["name"],
+                    "quantity": float(row["quantity"] or 1),
+                    "total_amount": _format_cents(item_sum_cents),
+                    "share_amount": _format_cents(share_amount_cents),
+                    "assigned_count": len(member_ids),
+                }
+            )
 
     participants: list[dict[str, Any]] = []
     for row in participants_rows:
         member_id = int(row["id"])
         amount_cents = totals_by_member.get(member_id, 0)
+        member_items = items_by_member.get(member_id, [])
         participants.append(
             {
                 "member_id": member_id,
@@ -1427,6 +1593,8 @@ def calculate_event(event_id: int, user_id: int) -> dict[str, Any]:
                 "is_owner": bool(row["user_id"] == event_row["owner_user_id"]),
                 "amount": _format_cents(amount_cents),
                 "amount_cents": amount_cents,
+                "items": member_items,
+                "items_count": len(member_items),
             }
         )
 
@@ -1442,6 +1610,8 @@ def calculate_event(event_id: int, user_id: int) -> dict[str, Any]:
             "total_items_amount": _format_cents(total_receipt_cents),
             "selected_items_amount": _format_cents(selected_cents),
             "participants_count": len(participants),
+            "unassigned_items_amount": _format_cents(total_receipt_cents - selected_cents),
+            "unassigned_items_count": unassigned_items_count,
         },
         "participants": participants,
     }

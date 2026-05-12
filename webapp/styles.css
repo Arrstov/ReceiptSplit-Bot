@@ -416,6 +416,59 @@ input[type="date"] {
   color: var(--brand-dark);
 }
 
+.item-side {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.item-edit-button {
+  padding: 8px 10px;
+  border-radius: 10px;
+  min-width: auto;
+}
+
+.item-edit-form {
+  display: grid;
+  grid-template-columns: 1.5fr 1fr auto;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.item-edit-form input {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px 11px;
+  font: inherit;
+  background: #f8fbff;
+}
+
+.item-edit-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.item-edit-actions > * {
+  flex: 1 1 0;
+}
+
+.item-delete-button {
+  border: 0;
+  border-radius: 14px;
+  padding: 12px 14px;
+  font: inherit;
+  font-weight: 800;
+  cursor: pointer;
+  background: #ffe9ec;
+  color: var(--danger);
+}
+
+.item-delete-button:disabled {
+  opacity: 0.65;
+  cursor: progress;
+}
+
 .item-participants {
   margin-top: 8px;
   display: flex;
@@ -469,14 +522,91 @@ input[type="date"] {
 }
 
 .result-card {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
+  padding: 0;
+  overflow: hidden;
 }
 
 .result-card-amount {
   color: var(--brand-dark);
   font-weight: 800;
+}
+
+.result-card-summary {
+  list-style: none;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  cursor: pointer;
+}
+
+.result-card-summary::-webkit-details-marker {
+  display: none;
+}
+
+.result-card-side {
+  text-align: right;
+  flex-shrink: 0;
+}
+
+.result-card-toggle {
+  margin-top: 4px;
+  font-size: 0.74rem;
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.result-card-items {
+  padding: 0 12px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.result-item-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #f8fbff;
+}
+
+.result-item-name {
+  font-weight: 700;
+}
+
+.result-item-meta {
+  margin-top: 3px;
+  font-size: 0.74rem;
+  color: var(--muted);
+}
+
+.result-item-amount {
+  color: var(--brand-dark);
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.result-warning-card {
+  border: 1px solid #ffd6aa;
+  border-radius: 14px;
+  background: linear-gradient(180deg, #fff6ea, #fffaf3);
+  padding: 12px;
+}
+
+.result-warning-title {
+  color: #b36400;
+  font-weight: 800;
+}
+
+.result-warning-text {
+  margin-top: 4px;
+  color: #8c641f;
+  font-size: 0.82rem;
 }
 
 .profile-top {
@@ -708,6 +838,24 @@ input[type="date"] {
 
   .manual-item-form {
     grid-template-columns: 1fr;
+  }
+
+  .item-edit-form {
+    grid-template-columns: 1fr;
+  }
+
+  .item-edit-actions {
+    flex-direction: column;
+  }
+
+  .result-card-summary,
+  .result-item-row {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .result-card-side {
+    text-align: left;
   }
 
   .row-buttons {

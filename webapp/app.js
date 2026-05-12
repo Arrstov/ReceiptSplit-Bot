@@ -13,6 +13,7 @@ const state = {
   createParticipants: [],
   createMode: "create",
   editingEventId: null,
+  editingItemId: null,
   currentEvent: null,
   currentResult: null,
   currentView: "home",
@@ -104,6 +105,14 @@ function formatMoney(value) {
   return `${amount.toLocaleString("ru-RU", options)} ₽`;
 }
 
+function toMoneyInputValue(value) {
+  const amount = toNumber(value);
+  if (Math.abs(amount - Math.round(amount)) < 0.00001) {
+    return String(Math.round(amount));
+  }
+  return amount.toFixed(2);
+}
+
 function formatDate(value) {
   if (!value) {
     return "Без даты";
@@ -138,6 +147,27 @@ function showToast(message, duration = 2400) {
   showToast.timer = window.setTimeout(() => {
     elements.toast.classList.add("is-hidden");
   }, duration);
+}
+
+function showConfirm(message, { title = "Подтверждение", okText = "Продолжить", cancelText = "Отмена" } = {}) {
+  return new Promise((resolve) => {
+    if (telegram?.showPopup) {
+      telegram.showPopup(
+        {
+          title,
+          message,
+          buttons: [
+            { id: "confirm", type: "default", text: okText },
+            { id: "cancel", type: "close", text: cancelText },
+          ],
+        },
+        (buttonId) => resolve(buttonId === "confirm"),
+      );
+      return;
+    }
+
+    resolve(window.confirm(message));
+  });
 }
 
 async function api(path, options = {}) {
@@ -650,6 +680,7 @@ function renderCurrentEvent() {
   const items = detail.items || [];
   const canAssign = Boolean(detail.permissions?.is_admin);
   const canEditEvent = Boolean(detail.permissions?.is_admin);
+  const canEditItems = Boolean(detail.permissions?.can_edit_items);
 
   elements.eventTitleText.textContent = event.title;
   elements.eventSubtitle.textContent = `${participants.length} участников • ${formatDate(event.event_date || event.created_at)}`;
@@ -697,8 +728,50 @@ function renderCurrentEvent() {
                 <div class="item-meta">${escapeHtml(item.store_name)} • x${escapeHtml(String(item.quantity))}</div>
               </div>
             </div>
-            <div class="item-price">${formatMoney(item.sum)}</div>
+            <div class="item-side">
+              <div class="item-price">${formatMoney(item.sum)}</div>
+              ${canEditItems ? `
+                <button
+                  type="button"
+                  class="secondary-pill item-edit-button"
+                  data-edit-item-id="${item.id}"
+                >
+                  ${state.editingItemId === item.id ? "Отмена" : "Редактировать"}
+                </button>
+              ` : ""}
+            </div>
           </div>
+          ${canEditItems && state.editingItemId === item.id ? `
+            <form class="item-edit-form" data-item-edit-form="${item.id}">
+              <input
+                type="text"
+                name="name"
+                maxlength="120"
+                placeholder="Название позиции"
+                value="${escapeHtml(item.name)}"
+                required
+              >
+              <input
+                type="number"
+                name="amount"
+                min="0.01"
+                step="0.01"
+                placeholder="Стоимость, ₽"
+                value="${escapeHtml(toMoneyInputValue(item.sum))}"
+                required
+              >
+              <div class="item-edit-actions">
+                <button type="submit" class="secondary-button">Сохранить</button>
+                <button
+                  type="button"
+                  class="item-delete-button"
+                  data-delete-item-id="${item.id}"
+                >
+                  Удалить
+                </button>
+              </div>
+            </form>
+          ` : ""}
           <div class="item-participants">${chips}</div>
         </article>
       `;
@@ -719,16 +792,56 @@ function renderResult() {
     return;
   }
 
-  elements.resultList.innerHTML = participants
+  const summary = result.summary || {};
+  const unassignedCount = Number(summary.unassigned_items_count || 0);
+  const warningBlock = unassignedCount > 0
+    ? `
+      <article class="result-warning-card">
+        <div class="result-warning-title">Не все позиции распределены</div>
+        <div class="result-warning-text">
+          Без участников осталось ${escapeHtml(String(unassignedCount))} поз. на сумму ${escapeHtml(formatMoney(summary.unassigned_items_amount || 0))}.
+        </div>
+      </article>
+    `
+    : "";
+
+  elements.resultList.innerHTML = warningBlock + participants
     .map(
       (participant) => `
-        <article class="result-card">
-          <div>
-            <div class="event-card-title">${escapeHtml(participant.display_name)}</div>
-            <div class="event-card-meta">${participant.is_owner ? "Организатор" : "Участник"}</div>
+        <details class="result-card">
+          <summary class="result-card-summary">
+            <div>
+              <div class="event-card-title">${escapeHtml(participant.display_name)}</div>
+              <div class="event-card-meta">
+                ${participant.is_owner ? "Организатор" : "Участник"} • ${escapeHtml(String(participant.items_count || 0))} поз.
+              </div>
+            </div>
+            <div class="result-card-side">
+              <div class="result-card-amount">${formatMoney(participant.amount)}</div>
+              <div class="result-card-toggle">Подробнее</div>
+            </div>
+          </summary>
+          <div class="result-card-items">
+            ${(participant.items || []).length
+              ? (participant.items || [])
+                .map(
+                  (item) => `
+                    <div class="result-item-row">
+                      <div>
+                        <div class="result-item-name">${escapeHtml(item.name)}</div>
+                        <div class="result-item-meta">
+                          x${escapeHtml(String(item.quantity || 1))}
+                          ${Number(item.assigned_count || 0) > 1 ? `• делится на ${escapeHtml(String(item.assigned_count))}` : ""}
+                        </div>
+                      </div>
+                      <div class="result-item-amount">${formatMoney(item.share_amount)}</div>
+                    </div>
+                  `,
+                )
+                .join("")
+              : `<div class="empty-state">У этого участника пока нет выбранных позиций.</div>`}
           </div>
-          <div class="result-card-amount">${formatMoney(participant.amount)}</div>
-        </article>
+        </details>
       `,
     )
     .join("");
@@ -755,6 +868,7 @@ async function refreshBaseData() {
 
 async function openEvent(eventId) {
   const detail = await api(`/api/events/${eventId}`);
+  state.editingItemId = null;
   state.currentEvent = detail;
   renderCurrentEvent();
   openView("event");
@@ -936,6 +1050,91 @@ async function handleManualItemSubmit(event) {
   }
 }
 
+async function handleItemEditSubmit(event) {
+  event.preventDefault();
+  if (!state.currentEvent?.event?.id) {
+    return;
+  }
+
+  const form = event.target;
+  if (!(form instanceof HTMLFormElement)) {
+    return;
+  }
+
+  const itemId = Number(form.dataset.itemEditForm);
+  if (!Number.isFinite(itemId)) {
+    return;
+  }
+
+  const formData = new FormData(form);
+  const name = String(formData.get("name") || "").trim();
+  const amount = String(formData.get("amount") || "").trim();
+
+  if (!name || !amount) {
+    showToast("Введите название и стоимость позиции.");
+    return;
+  }
+
+  const submitButton = form.querySelector('button[type="submit"]');
+  if (submitButton instanceof HTMLButtonElement) {
+    submitButton.disabled = true;
+  }
+
+  try {
+    const response = await apiJson(
+      `/api/events/${state.currentEvent.event.id}/items/${itemId}`,
+      "PUT",
+      { name, amount },
+    );
+    state.currentEvent = response.event;
+    state.editingItemId = null;
+    renderCurrentEvent();
+    await refreshBaseData();
+    renderHome();
+    renderEvents();
+    renderChecks();
+    renderProfile();
+    showToast("Позиция обновлена.");
+  } catch (error) {
+    showToast(error instanceof Error ? error.message : "Не удалось обновить позицию.");
+  } finally {
+    if (submitButton instanceof HTMLButtonElement) {
+      submitButton.disabled = false;
+    }
+  }
+}
+
+async function handleItemDelete(itemId, button) {
+  if (!state.currentEvent?.event?.id) {
+    return;
+  }
+
+  if (button instanceof HTMLButtonElement) {
+    button.disabled = true;
+  }
+
+  try {
+    const response = await api(`/api/events/${state.currentEvent.event.id}/items/${itemId}`, {
+      method: "DELETE",
+    });
+    state.currentEvent = response.event;
+    state.editingItemId = null;
+    renderCurrentEvent();
+    await refreshBaseData();
+    renderHome();
+    renderEvents();
+    renderChecks();
+    renderProfile();
+    showToast("Позиция удалена.");
+  } catch (error) {
+    showToast(error instanceof Error ? error.message : "Не удалось удалить позицию.");
+  } finally {
+    if (button instanceof HTMLButtonElement) {
+      button.disabled = false;
+    }
+  }
+}
+
 async function handleProfileNameEdit() {
   const currentProfile = state.me?.profile;
   const currentName = currentProfile?.custom_name || currentProfile?.display_name || "";
@@ -968,6 +1167,27 @@ async function handleProfileNameEdit() {
 async function handleCalculate() {
   if (!state.currentEvent?.event?.id) {
     return;
+  }
+
+  const unassignedItems = (state.currentEvent.items || []).filter(
+    (item) => !Array.isArray(item.assigned_member_ids) || item.assigned_member_ids.length === 0,
+  );
+  if (unassignedItems.length) {
+    const unassignedAmount = unassignedItems.reduce(
+      (sum, item) => sum + toNumber(item.sum),
+      0,
+    );
+    const shouldContinue = await showConfirm(
+      `Есть нераспределённые позиции: ${unassignedItems.length} шт. на сумму ${formatMoney(unassignedAmount)}. Они не попадут ни к кому в расчёт. Продолжить?`,
+      {
+        title: "Не все позиции распределены",
+        okText: "Рассчитать",
+        cancelText: "Вернуться",
+      },
+    );
+    if (!shouldContinue) {
+      return;
+    }
   }
 
   elements.calculateButton.disabled = true;
@@ -1190,9 +1410,41 @@ function bindEvents() {
     }
   });
 
+  elements.eventItems.addEventListener("submit", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLFormElement)) {
+      return;
+    }
+
+    if (!target.dataset.itemEditForm) {
+      return;
+    }
+
+    handleItemEditSubmit(event);
+  });
+
   elements.eventItems.addEventListener("click", (event) => {
     const target = event.target;
     if (!(target instanceof HTMLElement)) {
+      return;
+    }
+
+    const deleteButton = target.closest("[data-delete-item-id]");
+    if (deleteButton instanceof HTMLButtonElement) {
+      const itemId = Number(deleteButton.dataset.deleteItemId);
+      if (Number.isFinite(itemId) && state.currentEvent?.permissions?.can_edit_items) {
+        handleItemDelete(itemId, deleteButton);
+      }
+      return;
+    }
+
+    const editButton = target.closest("[data-edit-item-id]");
+    if (editButton instanceof HTMLElement) {
+      const itemId = Number(editButton.dataset.editItemId);
+      if (Number.isFinite(itemId) && state.currentEvent?.permissions?.can_edit_items) {
+        state.editingItemId = state.editingItemId === itemId ? null : itemId;
+        renderCurrentEvent();
+      }
       return;
     }
 
