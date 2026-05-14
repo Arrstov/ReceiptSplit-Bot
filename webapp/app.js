@@ -32,6 +32,7 @@ const elements = {
 
   createForm: document.getElementById("create-event-form"),
   createSubmitButton: document.getElementById("create-event-submit"),
+  deleteEventButton: document.getElementById("delete-event-button"),
   eventTitleInput: document.getElementById("event-title"),
   eventDateInput: document.getElementById("event-date"),
   createParticipants: document.getElementById("create-participants"),
@@ -417,6 +418,8 @@ function resetCreateDraft() {
   elements.eventTitleInput.value = "";
   elements.eventDateInput.value = "";
   elements.createSubmitButton.textContent = "Создать событие";
+  elements.deleteEventButton.classList.add("is-hidden");
+  elements.deleteEventButton.disabled = false;
   renderCreateParticipants();
 }
 
@@ -448,6 +451,8 @@ function openCreateForEdit() {
   elements.eventTitleInput.value = detail.event.title || "";
   elements.eventDateInput.value = detail.event.event_date || "";
   elements.createSubmitButton.textContent = "Сохранить изменения";
+  elements.deleteEventButton.classList.toggle("is-hidden", !detail.permissions?.is_owner);
+  elements.deleteEventButton.disabled = false;
   renderCreateParticipants();
   openView("create");
 }
@@ -477,9 +482,25 @@ function renderCreateParticipants() {
     .join("");
 }
 
-function openContactsModal() {
-  renderContacts();
+async function loadContacts() {
+  const response = await api("/api/contacts");
+  state.contacts = response.contacts || [];
+  state.contactsRequestLink = response.request_contacts_link || null;
+  state.contactsRequestTgLink = response.request_contacts_tg_link || null;
+  return response;
+}
+
+async function openContactsModal() {
+  renderEmpty(elements.contactsList, "Загружаю контакты...");
   elements.contactsModal.classList.remove("is-hidden");
+
+  try {
+    await loadContacts();
+    renderContacts();
+  } catch (error) {
+    renderEmpty(elements.contactsList, "Не удалось загрузить контакты.");
+    showToast(error instanceof Error ? error.message : "Не удалось загрузить контакты.");
+  }
 }
 
 function closeContactsModal() {
@@ -496,7 +517,7 @@ function renderContacts() {
   if (!state.contacts.length) {
     renderEmpty(
       elements.contactsList,
-      "Контактов пока нет. Нажмите кнопку выше, выберите людей в Telegram и вернитесь в Mini App.",
+      "Контактов пока нет. Нажмите кнопку выше, выберите людей в Telegram, затем вернитесь и откройте этот список снова.",
     );
     return;
   }
@@ -641,6 +662,7 @@ function requestContactsViaTelegram() {
   if (canSendData) {
     try {
       showToast("Отправил запрос в чат с ботом.");
+      closeContactsModal();
       telegram.sendData(
         JSON.stringify({
           action: "request_contacts",
@@ -658,16 +680,19 @@ function requestContactsViaTelegram() {
   }
 
   if (telegram?.openTelegramLink && state.contactsRequestLink) {
+    closeContactsModal();
     telegram.openTelegramLink(state.contactsRequestLink);
     return;
   }
 
   if (telegram?.openLink && state.contactsRequestTgLink) {
+    closeContactsModal();
     telegram.openLink(state.contactsRequestTgLink);
     return;
   }
 
   if (state.contactsRequestLink) {
+    closeContactsModal();
     window.open(state.contactsRequestLink, "_blank", "noopener,noreferrer");
     return;
   }
@@ -759,7 +784,7 @@ function renderCurrentEvent() {
           <div class="item-top">
             <div class="item-main">
               <input class="item-mine-checkbox" type="checkbox" data-item-id="${item.id}" ${item.is_mine ? "checked" : ""}>
-              <div>
+              <div class="item-copy">
                 <div class="item-name">${escapeHtml(item.name)}</div>
                 <div class="item-meta">${escapeHtml(item.store_name)} • x${escapeHtml(String(item.quantity))}</div>
               </div>
@@ -971,6 +996,46 @@ async function handleCreateEventSubmit(event) {
     showToast(error instanceof Error ? error.message : "Ошибка создания события.");
   } finally {
     elements.createSubmitButton.disabled = false;
+  }
+}
+
+async function handleDeleteEvent() {
+  if (state.createMode !== "edit" || !state.editingEventId) {
+    return;
+  }
+
+  const shouldDelete = await showConfirm(
+    "Удалить событие вместе с чеками, позициями и распределением? Это действие нельзя отменить.",
+    {
+      title: "Удалить событие",
+      okText: "Удалить",
+      cancelText: "Отмена",
+    },
+  );
+  if (!shouldDelete) {
+    return;
+  }
+
+  elements.deleteEventButton.disabled = true;
+  try {
+    await api(`/api/events/${state.editingEventId}`, {
+      method: "DELETE",
+    });
+
+    state.currentEvent = null;
+    state.currentResult = null;
+    resetCreateDraft();
+    await refreshBaseData();
+    renderHome();
+    renderEvents();
+    renderChecks();
+    renderProfile();
+    showToast("Событие удалено.");
+    openView("events");
+  } catch (error) {
+    showToast(error instanceof Error ? error.message : "Не удалось удалить событие.");
+  } finally {
+    elements.deleteEventButton.disabled = false;
   }
 }
 
@@ -1507,6 +1572,7 @@ function bindEvents() {
   elements.shareResultButton.addEventListener("click", handleShareResult);
   elements.profileEditName.addEventListener("click", handleProfileNameEdit);
   elements.eventEditButton.addEventListener("click", openCreateForEdit);
+  elements.deleteEventButton.addEventListener("click", handleDeleteEvent);
 }
 
 async function init() {

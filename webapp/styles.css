@@ -261,7 +261,8 @@ input[type="date"] {
 
 .primary-button,
 .secondary-button,
-.secondary-pill {
+.secondary-pill,
+.danger-button {
   border: 0;
   border-radius: 14px;
   padding: 12px 14px;
@@ -294,10 +295,20 @@ input[type="date"] {
   cursor: progress;
 }
 
+.danger-button:disabled {
+  opacity: 0.65;
+  cursor: progress;
+}
+
 .secondary-button,
 .secondary-pill {
   background: var(--brand-soft);
   color: var(--brand-dark);
+}
+
+.danger-button {
+  background: #ffecef;
+  color: var(--danger);
 }
 
 .participant-row {
@@ -409,30 +420,40 @@ input[type="date"] {
 }
 
 .item-top {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
   gap: 10px;
 }
 
 .item-main {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 8px;
+  min-width: 0;
+}
+
+.item-copy {
+  min-width: 0;
 }
 
 .item-name {
   font-weight: 700;
+  overflow-wrap: anywhere;
+  word-break: normal;
+  line-height: 1.35;
 }
 
 .item-meta {
   font-size: 0.75rem;
   color: var(--muted);
+  overflow-wrap: anywhere;
 }
 
 .item-price {
   font-weight: 800;
   color: var(--brand-dark);
+  white-space: nowrap;
 }
 
 .item-side {
@@ -440,12 +461,25 @@ input[type="date"] {
   flex-direction: column;
   align-items: flex-end;
   gap: 8px;
+  min-width: 0;
 }
 
 .item-edit-button {
-  padding: 8px 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 128px;
+  inline-size: 128px;
+  padding: 8px;
   border-radius: 10px;
   min-width: auto;
+  max-width: 128px;
+  min-height: 44px;
+  overflow: hidden;
+  text-align: center;
+  font-size: 0.86rem;
+  line-height: 1.1;
+  white-space: nowrap;
 }
 
 .item-edit-form {
@@ -493,6 +527,10 @@ input[type="date"] {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+}
+
+#calculate-button {
+  margin-top: 12px;
 }
 
 .member-chip {
@@ -594,8 +632,14 @@ input[type="date"] {
   background: #f8fbff;
 }
 
+.result-item-row > div:first-child {
+  min-width: 0;
+}
+
 .result-item-name {
   font-weight: 700;
+  overflow-wrap: anywhere;
+  line-height: 1.35;
 }
 
 .result-item-meta {
@@ -769,8 +813,7 @@ input[type="date"] {
   z-index: 20;
 }
 
-.modal.is-hidden,
-.toast.is-hidden,
+.is-hidden,
 .visually-hidden {
   display: none !important;
 }

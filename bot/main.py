@@ -61,7 +61,8 @@ def build_request_users_keyboard() -> ReplyKeyboardMarkup:
                     text="Выбрать участников из контактов",
                     request_users=KeyboardButtonRequestUsers(
                         request_id=CONTACTS_REQUEST_ID,
-                        max_quantity=20,
+                        user_is_bot=False,
+                        max_quantity=10,
                         request_name=True,
                         request_username=True,
                     ),
@@ -75,7 +76,7 @@ def build_request_users_keyboard() -> ReplyKeyboardMarkup:
 
 async def _send_contacts_request_prompt(message: Message) -> None:
     await message.answer(
-        "Нажмите кнопку ниже и выберите людей из Telegram-контактов.\n"
+        "Нажмите кнопку ниже и выберите до 10 людей из Telegram-контактов.\n"
         "После этого они появятся в Mini App в списке участников.",
         reply_markup=build_request_users_keyboard(),
     )
@@ -144,9 +145,12 @@ async def handle_users_shared(message: Message) -> None:
     saved = save_shared_contacts(owner["user_id"], shared_users)
     await message.answer(
         f"Готово, добавлено контактов: <b>{saved}</b>.\n"
-        "Вернитесь в Mini App и обновите данные.",
+        "Вернитесь в Mini App и снова откройте «Добавить из контактов».",
         reply_markup=ReplyKeyboardRemove(),
     )
+    keyboard = build_webapp_keyboard()
+    if keyboard is not None:
+        await message.answer("Можно вернуться в приложение:", reply_markup=keyboard)
 
 
 @dp.message(Command("join"), F.chat.type.in_({"group", "supergroup"}))

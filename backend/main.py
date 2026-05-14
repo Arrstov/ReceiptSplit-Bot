@@ -19,6 +19,7 @@ from backend.mvp_store import (
     add_receipt_to_event,
     calculate_event,
     create_event,
+    delete_event,
     delete_event_item,
     get_dashboard,
     get_event_for_user,
@@ -493,6 +494,22 @@ async def event_detail(request: Request, event_id: int) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail="Событие не найдено.")
 
     return event
+
+
+@app.delete("/api/events/{event_id}")
+async def delete_event_route(request: Request, event_id: int) -> dict[str, Any]:
+    actor = await _get_actor(request)
+    try:
+        deleted = delete_event(event_id=event_id, user_id=actor["user_id"])
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    return {
+        "status": "ok",
+        "deleted": deleted,
+    }
 
 
 @app.post("/api/events/{event_id}/receipts/upload")

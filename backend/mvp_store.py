@@ -791,6 +791,40 @@ def update_event(
     return event
 
 
+def delete_event(
+    *,
+    event_id: int,
+    user_id: int,
+) -> dict[str, Any]:
+    with _connect() as conn:
+        event_row = conn.execute(
+            """
+            SELECT id, title, owner_user_id
+            FROM events
+            WHERE id = ?
+            """,
+            (event_id,),
+        ).fetchone()
+        if event_row is None:
+            raise ValueError("Событие не найдено.")
+
+        if int(event_row["owner_user_id"]) != int(user_id):
+            raise PermissionError("Только организатор может удалить событие.")
+
+        conn.execute(
+            """
+            DELETE FROM events
+            WHERE id = ?
+            """,
+            (event_id,),
+        )
+
+    return {
+        "id": int(event_row["id"]),
+        "title": event_row["title"],
+    }
+
+
 def _is_member(conn: sqlite3.Connection, *, event_id: int, user_id: int) -> bool:
     row = conn.execute(
         """
