@@ -1,5 +1,6 @@
 ﻿from __future__ import annotations
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -37,6 +38,7 @@ from backend.mvp_store import (
 )
 from backend.proverkacheka_client import lookup_receipt_items
 from backend.qr_decoder import decode_qr_from_image_bytes
+from backend.receipt_ocr import extract_receipt_items_from_image
 from common.config import get_settings
 from common.receipt_qr import format_receipt_qr_message, parse_receipt_qr
 from common.telegram_auth import validate_init_data
@@ -246,6 +248,30 @@ async def _extract_receipt_data(
                 "receipt_summary": {},
             }
 
+    if settings.local_ocr_enabled and not items_lookup.get("items"):
+        try:
+            ocr_lookup = await asyncio.to_thread(
+                extract_receipt_items_from_image,
+                image_bytes,
+                tesseract_cmd=settings.tesseract_cmd,
+                languages=settings.tesseract_languages,
+                timeout_seconds=settings.tesseract_timeout_seconds,
+                tessdata_dir=settings.tesseract_tessdata_dir,
+            )
+            if ocr_lookup.get("items"):
+                items_lookup = ocr_lookup
+            else:
+                items_lookup["ocr_status"] = ocr_lookup.get("status")
+                items_lookup["ocr_message"] = ocr_lookup.get("message")
+        except RuntimeError as exc:
+            logger.warning("Local OCR skipped: %s", exc)
+            items_lookup["ocr_status"] = "error"
+            items_lookup["ocr_message"] = str(exc)
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("Failed to run local OCR")
+            items_lookup["ocr_status"] = "error"
+            items_lookup["ocr_message"] = f"Ошибка локального OCR: {exc}"
+
     receipt_summary = items_lookup.get("receipt_summary") or {}
     if receipt is None and receipt_summary:
         receipt = {
@@ -256,14 +282,16 @@ async def _extract_receipt_data(
             "fiscal_sign": receipt_summary.get("fiscal_sign"),
         }
 
-    if qr_payload is None and items_lookup.get("status") != "success":
+    if qr_payload is None and not items_lookup.get("items") and items_lookup.get("status") != "success":
         if local_qr_error and not settings.proverkacheka_api_token:
             raise HTTPException(status_code=503, detail=local_qr_error)
+        ocr_message = items_lookup.get("ocr_message")
         raise HTTPException(
             status_code=422,
             detail=(
                 "Не удалось получить данные чека: QR-код не считан, "
-                "а внешний сервис тоже не вернул результат."
+                "внешний сервис не вернул позиции"
+                + (f", локальный OCR: {ocr_message}" if ocr_message else ", локальный OCR не нашел позиции.")
             ),
         )
 
@@ -305,6 +333,19 @@ def _guess_store_name(items_lookup: dict[str, Any], receipt_payload: dict[str, A
         or receipt_payload.get("seller")
         or "Чек без названия"
     )
+
+
+def _build_recognition_payload(items_lookup: dict[str, Any]) -> dict[str, Any]:
+    summary = items_lookup.get("receipt_summary") or {}
+    warnings = list(items_lookup.get("warnings") or summary.get("ocr_warnings") or [])
+    return {
+        "source": items_lookup.get("request_mode") or items_lookup.get("status") or "unknown",
+        "status": items_lookup.get("status") or "unknown",
+        "message": items_lookup.get("message") or "",
+        "items_count": int(items_lookup.get("items_count") or len(items_lookup.get("items") or [])),
+        "confidence": summary.get("ocr_confidence"),
+        "warnings": warnings,
+    }
 
 
 @app.get("/api/me")
@@ -503,6 +544,7 @@ async def upload_receipt_to_event(
         "status": "ok",
         "message": "Чек добавлен в событие.",
         "saved": save_result,
+        "recognition": _build_recognition_payload(items_lookup),
         "event": event,
     }
 
@@ -739,5 +781,6 @@ async def process_receipt_photo(
         "telegram_delivery": delivery_status,
         "qr_payload": extracted.get("qr_payload"),
         "receipt": extracted["receipt"],
+        "recognition": _build_recognition_payload(extracted["items_lookup"]),
         "items_lookup": extracted["items_lookup"],
     }

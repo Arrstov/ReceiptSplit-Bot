@@ -22,6 +22,11 @@ class Settings:
     proverkacheka_api_token: str | None
     proverkacheka_api_url: str
     proverkacheka_timeout_seconds: float
+    local_ocr_enabled: bool
+    tesseract_cmd: str
+    tesseract_languages: str
+    tesseract_timeout_seconds: float
+    tesseract_tessdata_dir: str | None
 
     @property
     def normalized_webapp_url(self) -> str:
@@ -43,6 +48,24 @@ def _get_optional_env(name: str) -> str | None:
     return value or None
 
 
+def _get_bool_env(name: str, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _get_optional_path_env(name: str) -> str | None:
+    value = _get_optional_env(name)
+    if value is None:
+        return None
+
+    path = Path(value)
+    if not path.is_absolute():
+        path = BASE_DIR / path
+    return str(path.resolve())
+
+
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
     return Settings(
@@ -60,4 +83,9 @@ def get_settings() -> Settings:
         proverkacheka_timeout_seconds=float(
             os.getenv("PROVERKACHEKA_TIMEOUT_SECONDS", "20")
         ),
+        local_ocr_enabled=_get_bool_env("LOCAL_OCR_ENABLED", True),
+        tesseract_cmd=os.getenv("TESSERACT_CMD", "tesseract").strip() or "tesseract",
+        tesseract_languages=os.getenv("TESSERACT_LANGUAGES", "rus+eng").strip() or "rus+eng",
+        tesseract_timeout_seconds=float(os.getenv("TESSERACT_TIMEOUT_SECONDS", "20")),
+        tesseract_tessdata_dir=_get_optional_path_env("TESSERACT_TESSDATA_DIR"),
     )

@@ -184,6 +184,28 @@ function setUploadControlsLoading(isLoading) {
   elements.receiptGalleryInput.disabled = isLoading;
 }
 
+function getReceiptUploadMessage(recognition) {
+  if (!recognition) {
+    return "Чек обработан и добавлен в событие.";
+  }
+
+  const itemsCount = Number(recognition.items_count || 0);
+  const positionsText = itemsCount === 1 ? "позиция" : "позиций";
+  const hasWarnings = Array.isArray(recognition.warnings) && recognition.warnings.length > 0;
+
+  if (recognition.source === "local_ocr") {
+    return hasWarnings
+      ? `OCR распознал ${itemsCount} ${positionsText}. Проверьте список.`
+      : `OCR распознал ${itemsCount} ${positionsText}.`;
+  }
+
+  if (itemsCount > 0) {
+    return `Чек обработан: ${itemsCount} ${positionsText}.`;
+  }
+
+  return "Чек обработан и добавлен в событие.";
+}
+
 async function api(path, options = {}) {
   const requestOptions = { ...options };
   const headers = new Headers(requestOptions.headers || {});
@@ -1019,7 +1041,7 @@ async function handleUploadReceipt(file) {
     renderEvents();
     renderChecks();
     renderProfile();
-    showToast("Чек обработан и добавлен в событие.");
+    showToast(getReceiptUploadMessage(response.recognition), 4200);
   } catch (error) {
     showToast(error instanceof Error ? error.message : "Не удалось загрузить чек.");
   } finally {
