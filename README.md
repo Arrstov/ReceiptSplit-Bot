@@ -4,13 +4,15 @@
 
 В этом проекте есть:
 
-- `aiogram`-бот, который отвечает на `/start`
-- inline-кнопка `Открыть приложение` с `web_app`
-- `FastAPI` backend, который раздаёт Mini App и принимает данные из него
-- HTML/CSS/JS Mini App, открывающийся внутри Telegram
-- загрузка фото чека и извлечение QR-кода на backend
-- попытка получить позиции чека через `proverkacheka.com`
-- отправка результата обратно пользователю в чат
+* `aiogram`-бот, который отвечает на `/start`
+* inline-кнопка `Открыть приложение` с `web_app`
+* `FastAPI` backend, который раздаёт Mini App и принимает данные из него
+* HTML/CSS/JS Mini App, открывающийся внутри Telegram
+* загрузка фото чека и извлечение QR-кода на backend
+* попытка получить позиции чека через `proverkacheka.com`
+* отправка результата обратно пользователю в чат
+
+---
 
 ## Что делает MVP
 
@@ -28,33 +30,39 @@
 
 Что уже умеет обработка:
 
-- поиск QR-кода на фотографии
-- извлечение даты, суммы, ФН, ФД и ФП
-- вывод результата в Mini App
-- отправка результата пользователю в Telegram
+* поиск QR-кода на фотографии
+* извлечение даты, суммы, ФН, ФД и ФП
+* вывод результата в Mini App
+* отправка результата пользователю в Telegram
 
 Важно:
 
-- QR на кассовом чеке обычно содержит только реквизиты чека
-- для полного состава товаров нужен внешний источник данных
-- в текущем проекте для этого добавлена интеграция с `proverkacheka.com`
+* QR на кассовом чеке обычно содержит только реквизиты чека
+* для полного состава товаров нужен внешний источник данных
+* в текущем проекте для этого добавлена интеграция с `proverkacheka.com`
+
+---
 
 ## Стек
 
-- Python
-- aiogram
-- FastAPI
-- HTML + CSS + JavaScript
-- `.env` для конфигурации
+* Python 3.11+
+* aiogram 3
+* FastAPI
+* HTML + CSS + JavaScript
+* `.env` для конфигурации
+
+---
 
 ## Что нужно заранее
 
-- Python 3.11+ установлен в системе
-- Python добавлен в `PATH`
-- Telegram-бот создан через BotFather
-- доступен публичный HTTPS URL для Mini App
+* Python 3.11+ установлен в системе
+* Python добавлен в `PATH`
+* Telegram-бот создан через BotFather
+* Доступен публичный HTTPS URL для Mini App
 
 Если команды `python` или `pip` не находятся, переустановите Python с официального сайта и включите опцию `Add Python to PATH`.
+
+---
 
 ## Структура проекта
 
@@ -62,7 +70,12 @@
 ReceiptSplit-Bot/
 ├─ backend/
 │  ├─ __init__.py
-│  └─ main.py
+│  ├─ main.py
+│  ├─ mvp_store.py
+│  ├─ receipt_ocr.py
+│  ├─ qr_decoder.py
+│  ├─ receipt_qr.py
+│  └─ proverkacheka_client.py
 ├─ bot/
 │  ├─ __init__.py
 │  └─ main.py
@@ -74,11 +87,15 @@ ReceiptSplit-Bot/
 │  ├─ app.js
 │  ├─ index.html
 │  └─ styles.css
+├─ data/
+│  └─ mvp.sqlite3
 ├─ .env.example
 ├─ .gitignore
 ├─ README.md
 └─ requirements.txt
 ```
+
+---
 
 ## Переменные окружения
 
@@ -86,15 +103,15 @@ ReceiptSplit-Bot/
 
 Используемые переменные:
 
-- `BOT_TOKEN` — токен Telegram-бота от BotFather
-- `WEBAPP_URL` — публичный HTTPS URL, по которому Telegram сможет открыть Mini App
-- `BACKEND_HOST` — хост для локального запуска FastAPI
-- `BACKEND_PORT` — порт для локального запуска FastAPI
-- `LOG_LEVEL` — уровень логирования
-- `INIT_DATA_TTL_SECONDS` — максимальный возраст `initData` в секундах
-- `PROVERKACHEKA_API_TOKEN` — токен доступа к API `proverkacheka.com`
-- `PROVERKACHEKA_API_URL` — URL API сервиса проверки чеков
-- `PROVERKACHEKA_TIMEOUT_SECONDS` — таймаут внешнего API в секундах
+* `BOT_TOKEN` — токен Telegram-бота от BotFather
+* `WEBAPP_URL` — публичный HTTPS URL для Mini App
+* `BACKEND_HOST` — хост для локального запуска FastAPI
+* `BACKEND_PORT` — порт для локального запуска FastAPI
+* `LOG_LEVEL` — уровень логирования
+* `INIT_DATA_TTL_SECONDS` — максимальный возраст `initData` в секундах
+* `PROVERKACHEKA_API_TOKEN` — токен доступа к API `proverkacheka.com`
+* `PROVERKACHEKA_API_URL` — URL API сервиса проверки чеков
+* `PROVERKACHEKA_TIMEOUT_SECONDS` — таймаут внешнего API в секундах
 
 Пример:
 
@@ -109,6 +126,9 @@ PROVERKACHEKA_API_TOKEN=your_proverkacheka_api_token_here
 PROVERKACHEKA_API_URL=https://proverkacheka.com/api/v1/check/get
 PROVERKACHEKA_TIMEOUT_SECONDS=20
 ```
+
+---
+
 ## Установка и запуск
 
 ### 1. Создайте виртуальное окружение
@@ -132,11 +152,7 @@ pip install -r requirements.txt
 Copy-Item .env.example .env
 ```
 
-После этого заполните:
-
-- `BOT_TOKEN`
-- `WEBAPP_URL`
-- `PROVERKACHEKA_API_TOKEN`
+Заполните обязательные поля: `BOT_TOKEN`, `WEBAPP_URL`, `PROVERKACHEKA_API_TOKEN`.
 
 ### 4. Запустите backend
 
@@ -144,10 +160,8 @@ Copy-Item .env.example .env
 uvicorn backend.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
-После запуска локально откроются:
-
-- Mini App: `http://127.0.0.1:8000/`
-- healthcheck: `http://127.0.0.1:8000/api/health`
+* Mini App: `http://127.0.0.1:8000/`
+* Healthcheck: `http://127.0.0.1:8000/api/health`
 
 ### 5. Запустите бота
 
@@ -157,94 +171,72 @@ uvicorn backend.main:app --reload --host 127.0.0.1 --port 8000
 python -m bot.main
 ```
 
+---
+
 ## Как подключить URL Mini App
 
-Для этого MVP URL Mini App берётся из переменной окружения `WEBAPP_URL`.
+* URL Mini App берётся из переменной окружения `WEBAPP_URL`
+* Бот передаёт его в inline-кнопку:
 
-Именно этот URL бот передаёт в inline-кнопку:
+```python
+InlineKeyboardButton(text="Открыть приложение", web_app=WebAppInfo(url=WEBAPP_URL))
+```
 
-- `InlineKeyboardButton`
-- `web_app=WebAppInfo(url=WEBAPP_URL)`
+**Важно:** для работы в Telegram нужен публичный HTTPS URL. `http://localhost` не работает в основном Telegram-клиенте.
 
-Что нужно сделать:
+---
 
-1. Поднимите backend локально
-2. Пробросьте локальный сервер наружу в публичный HTTPS URL
-3. Скопируйте этот URL в `.env` как `WEBAPP_URL`
-4. Перезапустите backend и бота
-
-Важно:
-
-- для обычного Telegram нужен публичный `HTTPS` URL
-- `http://localhost:8000` внутри обычного Telegram работать как полноценный Mini App не будет
-- локальный URL можно открыть в браузере для проверки вёрстки, но не для полной проверки Telegram-интеграции
-
-## Как использовать ngrok
-
-Пример с `ngrok`:
+## Использование ngrok
 
 1. Установите `ngrok`
-2. Запустите backend локально на `8000`
-3. В новом окне терминала выполните:
+2. Запустите backend на `8000`
+3. В новом терминале:
 
 ```powershell
 ngrok http 8000
 ```
 
-4. Скопируйте HTTPS адрес вида:
+4. Скопируйте HTTPS адрес вида `https://abc123.ngrok-free.app`
+5. Укажите его в `.env` как `WEBAPP_URL`
+6. Перезапустите backend и бота
 
-```text
-https://abc123.ngrok-free.app
-```
+Альтернативы: Cloudflare Tunnel, localhost.run или VPS с HTTPS.
 
-5. Укажите его в `.env`:
+---
 
-```env
-WEBAPP_URL=https://abc123.ngrok-free.app
-```
+## OCR и обработка чеков
 
-6. Перезапустите бота
+* OpenCV ищет QR-код на фото чека
+* Из QR извлекаются реквизиты: дата, сумма, ФН, ФД, ФП
+* Запрос к внешнему сервису `proverkacheka.com` получает позиции чека
+* Если API недоступен — используется локальный OCR Tesseract
+* Результат сохраняется в базе и отображается в Mini App
 
-Альтернативы:
+---
 
-- Cloudflare Tunnel
-- localhost.run
-- любой VPS или хостинг с HTTPS
+## Ограничения и рекомендации
 
-## Ограничения локального запуска
+* QR-код содержит только реквизиты чека — полный список товаров требует API или ручного ввода
+* SQLite достаточен для MVP, PostgreSQL для масштабирования
+* Минимальный UX — простой интерфейс Mini App
+* Основной фокус — рабочий сценарий дележа чеков, монетизация и расширенные функции — в будущем
 
-- обычный локальный браузер не передаёт `Telegram.WebApp.initData`
-- без Telegram нельзя полноценно проверить встроенное открытие окна
-- без публичного HTTPS URL Telegram-клиент не сможет нормально работать с Mini App в основной среде
-- reply keyboard и inline button используют немного разные сценарии возврата данных
+---
 
-Для текущего MVP выбран самый простой рабочий вариант:
+## Почему выбран этот подход
 
-- открытие через inline-кнопку
-- возврат данных через backend
-- отправка результата обратно пользователю ботом
+* Данные Mini App отправляются через backend для валидации `initData`
+* Backend позволяет расширять OCR, хранение сессий и расчёты
+* inline web_app удобен для интеграции в Telegram без отдельного приложения
 
-## Почему сделано именно так
+---
 
-В Telegram Mini Apps есть два популярных варианта возврата данных:
+## Следующие шаги развития
 
-1. `Telegram.WebApp.sendData(...)`
-2. отправка данных на backend
-
-Для этого MVP основной путь — backend, потому что:
-
-- он хорошо подходит для `inline web_app`
-- позволяет валидировать `initData`
-- даёт основу для будущей серверной логики ReceiptSplit
-- его проще расширять под OCR, сессии, базу данных и расчёты
-
-## Логичные следующие шаги развития проекта
-
-1. Добавить SQLite и хранение пользовательских сессий
-2. Сделать сценарий `/split` для группового чата
-3. Добавить создание сессии дележа и список участников
-4. Добавить загрузку фото чека
-5. Подключить OCR
-6. Реализовать список позиций и распределение по участникам
-7. Добавить итоговые суммы и историю сессий
-8. Перенести форму Mini App в полноценный интерфейс управления чеком
+1. Хранение пользовательских сессий в SQLite
+2. Сценарий `/split` для группового чата
+3. Добавление участников и создание событий
+4. Загрузка фото чека и интеграция с OCR
+5. Список позиций и распределение между участниками
+6. Итоговые суммы и история сессий
+7. Расширение Mini App до полноценного интерфейса управления чеком
