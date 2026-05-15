@@ -763,25 +763,29 @@ def _run_tesseract_tsv(
     timeout_seconds: float,
     tessdata_dir: str | None,
 ) -> str:
-    command = [
-        tesseract_cmd,
-        image_path,
-        "stdout",
-    ]
-    if tessdata_dir:
-        command.extend(["--tessdata-dir", tessdata_dir])
-    command.extend(
-        [
-        "-l",
-        languages,
-        "--oem",
-        "1",
-        "--psm",
-        "6",
-        "tsv",
+    def build_command(*, include_tessdata_dir: bool) -> list[str]:
+        command = [
+            tesseract_cmd,
+            image_path,
+            "stdout",
         ]
-    )
+        if include_tessdata_dir and tessdata_dir:
+            command.extend(["--tessdata-dir", tessdata_dir])
+        command.extend(
+            [
+                "-l",
+                languages,
+                "--oem",
+                "1",
+                "--psm",
+                "6",
+                "tsv",
+            ]
+        )
+        return command
+
     creationflags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+    command = build_command(include_tessdata_dir=True)
     completed = subprocess.run(
         command,
         capture_output=True,
@@ -792,6 +796,21 @@ def _run_tesseract_tsv(
         creationflags=creationflags,
         check=False,
     )
+
+    if completed.returncode != 0 and tessdata_dir:
+        fallback_command = build_command(include_tessdata_dir=False)
+        fallback_completed = subprocess.run(
+            fallback_command,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout_seconds,
+            creationflags=creationflags,
+            check=False,
+        )
+        if fallback_completed.returncode == 0:
+            return fallback_completed.stdout
 
     if completed.returncode != 0:
         stderr = _normalize_text(completed.stderr)[:500]

@@ -66,6 +66,22 @@ def _get_optional_path_env(name: str) -> str | None:
     return str(path.resolve())
 
 
+def _get_first_optional_env(*names: str) -> str | None:
+    for name in names:
+        value = _get_optional_env(name)
+        if value is not None:
+            return value
+    return None
+
+
+def _get_first_optional_path_env(*names: str) -> str | None:
+    for name in names:
+        value = _get_optional_path_env(name)
+        if value is not None:
+            return value
+    return None
+
+
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
     return Settings(
@@ -75,7 +91,10 @@ def get_settings() -> Settings:
         backend_port=int(os.getenv("BACKEND_PORT", "8000")),
         log_level=os.getenv("LOG_LEVEL", "INFO").upper(),
         init_data_ttl_seconds=int(os.getenv("INIT_DATA_TTL_SECONDS", "86400")),
-        proverkacheka_api_token=_get_optional_env("PROVERKACHEKA_API_TOKEN"),
+        proverkacheka_api_token=_get_first_optional_env(
+            "PROVERKACHEKA_API_TOKEN",
+            "PROVERKACHEKA_API_KEY",
+        ),
         proverkacheka_api_url=os.getenv(
             "PROVERKACHEKA_API_URL",
             "https://proverkacheka.com/api/v1/check/get",
@@ -87,5 +106,8 @@ def get_settings() -> Settings:
         tesseract_cmd=os.getenv("TESSERACT_CMD", "tesseract").strip() or "tesseract",
         tesseract_languages=os.getenv("TESSERACT_LANGUAGES", "rus+eng").strip() or "rus+eng",
         tesseract_timeout_seconds=float(os.getenv("TESSERACT_TIMEOUT_SECONDS", "20")),
-        tesseract_tessdata_dir=_get_optional_path_env("TESSERACT_TESSDATA_DIR"),
+        tesseract_tessdata_dir=_get_first_optional_path_env(
+            "TESSERACT_TESSDATA_DIR",
+            "TESSDATA_PREFIX",
+        ),
     )
